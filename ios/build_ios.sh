@@ -64,7 +64,10 @@ PY
 echo "link: $frameworks"
 
 # --- the game -------------------------------------------------------------------
+# CMake makes iOS executables .app bundles by default; package_ios.py builds
+# the bundle, so eb_cpp stays a plain executable (as its install rules expect).
 cmake -S "$root" -B "$work/build" "${ios_cmake[@]}" \
+    -DCMAKE_MACOSX_BUNDLE=OFF \
     -DEB_BUILD_TESTS=OFF -DSDL3_DIR="$sdl_install/lib/cmake/SDL3" \
     -DCMAKE_EXE_LINKER_FLAGS="$frameworks"
 cmake --build "$work/build" --target eb_cpp --parallel "$jobs"
