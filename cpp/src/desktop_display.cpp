@@ -293,6 +293,7 @@ struct DesktopDisplay::Impl {
                              aspect, top_inset);
         presenter_->apply_crt(settings_.crt_filter);
         draw_touch_controls(drawable_width, drawable_height, aspect, top_inset);
+        gles::drain_errors("after the touch controls");
         if (panel_) {
             // Copy observations rather than exposing mutable hardware to the UI.
             // Formatting full register strings is only needed for a visible panel.
@@ -337,6 +338,7 @@ struct DesktopDisplay::Impl {
                 refresh_asset_cache();
             handle_panel_action();
         }
+        gles::drain_errors("after the settings panel");
         // Read back before swap so captures contain this frame and its overlay.
         if (!capture.empty())
             presenter_->capture().write_ppm(capture);

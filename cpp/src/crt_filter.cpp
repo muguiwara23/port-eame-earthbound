@@ -44,6 +44,6 @@ void CrtFilter::draw(unsigned native_texture, int source_width, int source_heigh
     gles::quad(gles::uv_top_down);
     glUseProgram(0);
     glBindTexture(GL_TEXTURE_2D, 0);
-    if (glGetError() != GL_NO_ERROR) throw std::runtime_error("OpenGL CRT filter failed");
+    gles::check("OpenGL CRT filter failed");
 }
 } // namespace eb

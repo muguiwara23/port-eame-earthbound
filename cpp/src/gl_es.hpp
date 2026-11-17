@@ -8,6 +8,7 @@
 // as GLSL ES 1.00, which differs from them only in its header.
 
 #include <SDL3/SDL_opengles2.h>
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -109,6 +110,29 @@ inline void quad(const float (&uv)[8]) {
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glDisableVertexAttribArray(position_attribute);
     glDisableVertexAttribArray(texcoord_attribute);
+}
+
+// Port/eame: OpenGL keeps an error until someone reads it, so a step that
+// left one would otherwise be blamed on the next check. Reads (and logs, the
+// first few times, with where) any pending errors; returns how many.
+inline int drain_errors(const char* where) {
+    static int logged = 0;
+    int count = 0;
+    for (GLenum error; count < 16 && (error = glGetError()) != GL_NO_ERROR; ++count)
+        if (logged < 40) {
+            ++logged;
+            std::fprintf(stderr, "OpenGL: error 0x%04x %s\n", unsigned(error), where);
+        }
+    return count;
+}
+
+// A failed step's message with the OpenGL error's code.
+inline void check(const char* what) {
+    const GLenum error = glGetError();
+    if (error == GL_NO_ERROR) return;
+    char code[16];
+    std::snprintf(code, sizeof code, "0x%04x", unsigned(error));
+    throw std::runtime_error(std::string(what) + " (OpenGL error " + code + ")");
 }
 
 // Source row zero at the top of the picture, opposite GL's screen origin.

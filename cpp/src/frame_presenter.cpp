@@ -91,12 +91,13 @@ void FramePresenter::draw(std::span<const std::uint32_t> pixels, int source_widt
     // Source row zero is the top of the picture, opposite GL's screen origin.
     gles::quad(gles::uv_top_down);
     glUseProgram(0);
-    if (glGetError() != GL_NO_ERROR) throw std::runtime_error("OpenGL framebuffer presentation failed");
+    gles::check("OpenGL framebuffer presentation failed");
 }
 
 bool FramePresenter::begin_draw(int drawable_width, int drawable_height, double display_aspect, int top_inset_pixels) {
     drawable_width_ = drawable_width;
     drawable_height_ = drawable_height;
+    gles::drain_errors("left before the frame (by the panel, the touch controls or the last frame)");
     if (drawable_width <= 0 || drawable_height <= 0) return false;
     // Keep capture dimensions at the full drawable size. Only the game's
     // viewport shrinks, leaving at least one row when a tiny window is resized.
@@ -131,6 +132,7 @@ bool FramePresenter::draw_scene(const DirectScenePicture& picture, int drawable_
     const auto& scene = *picture.artwork;
     GLint depth{}, stencil{};
     glGetIntegerv(GL_DEPTH_BITS, &depth); glGetIntegerv(GL_STENCIL_BITS, &stencil);
+    gles::drain_errors("asking the depth and stencil bits");
     if ((!depth || !stencil) && !scene.effects) return false;
     if (!scene.width || !scene.atlas_width || !scene.atlas_height || scene.atlas_width > 4096 || scene.atlas_height > 4096 ||
         scene.atlas.size() != std::size_t(scene.atlas_width) * scene.atlas_height)
@@ -219,7 +221,7 @@ bool FramePresenter::draw_scene(const DirectScenePicture& picture, int drawable_
     batch.flush();
     glDisable(GL_SCISSOR_TEST); glDisable(GL_STENCIL_TEST); glDisable(GL_DEPTH_TEST);
     glUseProgram(0);
-    if (glGetError() != GL_NO_ERROR) throw std::runtime_error("OpenGL direct scene presentation failed");
+    gles::check("OpenGL direct scene presentation failed");
     return true;
 }
 
@@ -270,7 +272,7 @@ FrameImage FramePresenter::capture() const {
     std::vector<std::uint8_t> rgba(static_cast<std::size_t>(drawable_width_) * drawable_height_ * 4);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, drawable_width_, drawable_height_, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-    if (glGetError() != GL_NO_ERROR) throw std::runtime_error("OpenGL screenshot readback failed");
+    gles::check("OpenGL screenshot readback failed");
     for (std::size_t i = 0, n = rgba.size() / 4; i < n; ++i) {
         image.rgb[3 * i] = rgba[4 * i];
         image.rgb[3 * i + 1] = rgba[4 * i + 1];

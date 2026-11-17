@@ -224,7 +224,7 @@ void SceneEffectsRenderer::draw(const DirectScenePicture& picture, unsigned atla
         glUniform3f(glGetUniformLocation(gl.resolve.id, "Fixed"), effect.fixed[0], effect.fixed[1], effect.fixed[2]);
         glUniform1f(glGetUniformLocation(gl.resolve.id, "Brightness"), effect.brightness);
         gles::quad(gles::uv_bottom_up);
-        if (glGetError() != GL_NO_ERROR) throw std::runtime_error("OpenGL scene effect composition failed");
+        gles::check("OpenGL scene effect composition failed");
     } catch (...) { gl.cleanup(viewport); throw; }
     gl.cleanup(viewport);
 }
