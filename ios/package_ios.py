@@ -8,6 +8,7 @@ folder with the Files app (UIFileSharingEnabled), and it is imported there on
 the first launch. The .ipa is NOT signed; the player's own tool signs it."""
 import argparse
 import hashlib
+import json
 import plistlib
 import shutil
 import stat
@@ -19,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_NAME = "Phase Distorter"
 EXECUTABLE = "PhaseDistorter"
 MINIMUM_IOS = "16.0"
+IOS_MINIMUM = "16.0"
 FORBIDDEN = (".sfc", ".smc", ".ebpak", ".srm", ".state")
 
 
@@ -67,6 +69,52 @@ def info_plist(version, build, bundle_id):
     )
 
 
+def stage_icon(app, icon, info):
+    """The app's icon from one square picture: actool makes the asset
+    catalog and the sizes iPhone and iPad want (Info.plist's CFBundleIcons);
+    without actool, sips makes the sizes and the plist names them."""
+    # Beside the stage, not in it: only Payload/<app> goes into the .ipa.
+    work = app.parent.parent.parent / "icon-work"
+    shutil.rmtree(work, ignore_errors=True)
+    catalog = work / "Assets.xcassets"
+    appicon = catalog / "AppIcon.appiconset"
+    appicon.mkdir(parents=True)
+    # A 1024 x 1024 PNG (the private icon is one already, RGB with no
+    # transparency); sips only resizes or converts what is not.
+    picture = appicon / "icon.png"
+    shutil.copyfile(icon, picture)
+    if icon.suffix.lower() != ".png" or icon.read_bytes()[16:24] != (1024).to_bytes(4, "big") * 2:
+        subprocess.run(
+            ["sips", "-s", "format", "png", "-z", "1024", "1024", str(icon), "--out", str(picture)],
+            check=True, stdout=subprocess.DEVNULL,
+        )
+    (catalog / "Contents.json").write_text('{"info":{"author":"xcode","version":1}}')
+    (appicon / "Contents.json").write_text(json.dumps({
+        "images": [{"filename": "icon.png", "idiom": "universal", "platform": "ios", "size": "1024x1024"}],
+        "info": {"author": "xcode", "version": 1},
+    }))
+    partial = work / "partial.plist"
+    made = subprocess.run(
+        ["xcrun", "actool", str(catalog), "--compile", str(app), "--platform", "iphoneos",
+         "--minimum-deployment-target", IOS_MINIMUM, "--app-icon", "AppIcon",
+         "--target-device", "iphone", "--target-device", "ipad",
+         "--output-partial-info-plist", str(partial), "--output-format", "human-readable-text"],
+        check=False,
+    )
+    if made.returncode == 0 and partial.is_file():
+        info.update(plistlib.loads(partial.read_bytes()))
+        print("icon: asset catalog by actool:", sorted(p.name for p in app.glob("AppIcon*")) + (["Assets.car"] if (app / "Assets.car").is_file() else []))
+        return
+    print("icon: actool failed; plain PNG icons")
+    sizes = {"AppIcon60x60@2x.png": 120, "AppIcon60x60@3x.png": 180,
+             "AppIcon76x76@2x~ipad.png": 152, "AppIcon83.5x83.5@2x~ipad.png": 167}
+    for name, size in sizes.items():
+        subprocess.run(["sips", "-z", str(size), str(size), str(appicon / "icon.png"), "--out", str(app / name)],
+                       check=True, stdout=subprocess.DEVNULL)
+    info["CFBundleIcons"] = {"CFBundlePrimaryIcon": {"CFBundleIconFiles": ["AppIcon60x60"]}}
+    info["CFBundleIcons~ipad"] = {"CFBundlePrimaryIcon": {"CFBundleIconFiles": ["AppIcon60x60", "AppIcon76x76", "AppIcon83.5x83.5"]}}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--binary", type=Path, required=True)
@@ -74,6 +122,7 @@ def main():
     parser.add_argument("--version", default="0.5-ios-dev")
     parser.add_argument("--bundle-id", default="org.porteame.earthbound")
     parser.add_argument("--sdl-license", type=Path, required=True)
+    parser.add_argument("--icon", type=Path, help="A square picture for the app's icon (kept out of the repository)")
     options = parser.parse_args()
 
     out = options.out.resolve()
@@ -107,6 +156,8 @@ def main():
     build = str(int(revision[:7], 16)) if revision else "1"
     numeric = "".join(c for c in options.version.split("-")[0] if c.isdigit() or c == ".") or "0.5"
     info = info_plist(numeric, build, options.bundle_id)
+    if options.icon:
+        stage_icon(app, options.icon.resolve(), info)
     (app / "Info.plist").write_bytes(plistlib.dumps(info, fmt=plistlib.FMT_BINARY))
 
     archive = out / f"PhaseDistorter-{options.version}-ios-arm64-unsigned.ipa"

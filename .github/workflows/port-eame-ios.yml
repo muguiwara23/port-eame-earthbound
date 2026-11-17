@@ -13,6 +13,10 @@ on:
         options:
           - macos-15-intel
           - macos-15
+      icon:
+        description: "Put Arturo's icon in the app"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -36,7 +40,17 @@ jobs:
       - name: Build SDL3 for iOS, the game, and the unsigned IPA
         env:
           PORTEAME_VERSION: 0.5-ios-dev.${{ github.run_number }}
-        run: bash ios/build_ios.sh
+          # Arturo's own icon, kept in the repository only encrypted; without
+          # the secret (or with the box unticked) the app has no icon.
+          PORTEAME_ICON_KEY: ${{ secrets.PORTEAME_ICON_KEY }}
+        run: |
+          if [ "${{ inputs.icon }}" != "false" ] && [ -n "$PORTEAME_ICON_KEY" ]; then
+            python3 ios/port_eame_private.py decrypt ios/private/app-icon.png.enc "$RUNNER_TEMP/app-icon.png" "$PORTEAME_ICON_KEY"
+            export PORTEAME_ICON="$RUNNER_TEMP/app-icon.png"
+          else
+            echo "No icon for this build"
+          fi
+          bash ios/build_ios.sh
       - uses: actions/upload-artifact@v4
         with:
           name: earthbound-ios-unsigned-ipa

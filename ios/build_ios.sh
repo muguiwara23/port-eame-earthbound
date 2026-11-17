@@ -77,5 +77,9 @@ lipo -info "$binary"
 otool -l "$binary" | awk '/LC_BUILD_VERSION/{f=1} f&&/(platform|minos|sdk)/{print} f&&/ntools/{f=0}'
 
 # --- package -------------------------------------------------------------------
+# PORTEAME_ICON: a square picture for the app's icon (Arturo's own, decrypted
+# by the workflow from ios/private; never part of the repository in clear).
+icon=()
+if [[ -n "${PORTEAME_ICON:-}" ]]; then icon=(--icon "$PORTEAME_ICON"); fi
 python3 "$root/ios/package_ios.py" --binary "$binary" --out "$work/release" --version "$version" \
-    --sdl-license "$sdl_source/LICENSE.txt"
+    --sdl-license "$sdl_source/LICENSE.txt" "${icon[@]}"
