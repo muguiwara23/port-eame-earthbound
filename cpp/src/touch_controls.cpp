@@ -13,10 +13,16 @@ namespace eb {
 namespace {
 using Button = TouchControls::Button;
 
-// JOY1 bits, as DesktopInput's keyboard map sets them.
+// JOY1 bits, as DesktopInput's keyboard map sets them (A 7, X 6, L 5, R 4,
+// B 15, Y 14, Select 13, Start 12, the D-pad 11-8), with one change for
+// thumbs: EarthBound's quick Talk/Check is the SNES L button and its A opens
+// the command menu, while Y does nothing in the game. So the on-screen A
+// sends L (talk or check at once; L also confirms in menus) and the on-screen
+// Y sends A (the command menu). L itself still sends L.
+constexpr std::uint16_t snes_a = 1u << 7, snes_l = 1u << 5;
 constexpr std::array<std::uint16_t, TouchControls::Count> joy1{
     1u << 11, 1u << 10, 1u << 9, 1u << 8, // Up Down Left Right
-    1u << 7, 1u << 15, 1u << 6, 1u << 14, // A B X Y
+    snes_l, 1u << 15, 1u << 6, snes_a,    // A (talk/check) B X Y (menu)
     1u << 5, 1u << 4, 1u << 13, 1u << 12, // L R Select Start
     0};                                   // Menu: take_menu
 
@@ -235,6 +241,9 @@ struct TouchControls::Impl {
     bool touched = false, blocked = false;
     std::array<FingerState, fingers_max> fingers{};
     std::uint16_t held = 0, tapped = 0;
+    // Which on-screen buttons a finger holds (for drawing: the on-screen A
+    // and L send the same SNES bit).
+    unsigned shown_held = 0;
     bool menu_down = false, menu_tapped = false;
     // Pictures: [button][held]; the D-pad is one picture per held arrows.
     std::array<std::array<Sprite, 2>, Count> sprites{};
@@ -278,6 +287,19 @@ struct TouchControls::Impl {
         return Zone::None;
     }
 
+    // The face button a finger presses: the nearest, unless it slid well away.
+    int face_button(const FingerState &f) const {
+        if (std::hypot(f.x - face_x, f.y - face_y) > unit * 3) return -1;
+        int nearest = A;
+        float best = 1e30f;
+        for (int b : {A, B, X, Y}) {
+            const auto &r = rects[b];
+            const float d = std::hypot(f.x - (r.x + r.w / 2), f.y - (r.y + r.h / 2));
+            if (d < best) best = d, nearest = b;
+        }
+        return nearest;
+    }
+
     // The D-pad goes by the angle from its middle, so a diagonal presses both
     // arrows; the face buttons by the nearest one.
     std::uint16_t press_at(const FingerState &f) const {
@@ -294,15 +316,8 @@ struct TouchControls::Impl {
             return out;
         }
         case Zone::Face: {
-            if (std::hypot(f.x - face_x, f.y - face_y) > unit * 3) return 0;
-            int nearest = A;
-            float best = 1e30f;
-            for (int b : {A, B, X, Y}) {
-                const auto &r = rects[b];
-                const float d = std::hypot(f.x - (r.x + r.w / 2), f.y - (r.y + r.h / 2));
-                if (d < best) best = d, nearest = b;
-            }
-            return joy1[nearest];
+            const int nearest = face_button(f);
+            return nearest < 0 ? 0 : joy1[nearest];
         }
         case Zone::Button:
             return in_button(f.button, f.x, f.y) ? joy1[f.button] : 0;
@@ -314,9 +329,15 @@ struct TouchControls::Impl {
     void refresh() {
         std::uint16_t now = 0;
         bool menu = false;
+        shown_held = 0;
         for (const auto &f : fingers) {
             if (!f.used) continue;
             now |= f.bits;
+            if (f.zone == Zone::Face) {
+                if (const int b = face_button(f); b >= 0) shown_held |= 1u << b;
+            } else if (f.zone == Zone::Button && in_button(f.button, f.x, f.y)) {
+                shown_held |= 1u << f.button;
+            }
             if (f.zone == Zone::Button && f.button == Menu) menu |= in_button(Menu, f.x, f.y);
         }
         tapped |= now & ~held;
@@ -556,7 +577,7 @@ void TouchControls::draw() {
     if (!d.dpad[arrows].texture) d.make_dpad(d.dpad[arrows], arrows);
     d.draw_sprite(d.dpad[arrows]);
     for (int b = A; b < Count; ++b) {
-        const bool down = b == Menu ? d.menu_down : (d.held & joy1[b]) != 0;
+        const bool down = (d.shown_held >> b) & 1u;
         auto &sprite = d.sprites[b][down];
         if (!sprite.texture) {
             if (b <= Y) d.make_face(sprite, b, down);
