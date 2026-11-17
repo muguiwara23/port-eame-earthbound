@@ -77,6 +77,9 @@ struct SceneEffectsRenderer::Impl {
     } layer, resolve;
     GLuint framebuffer{}, depth_stencil{}, images[2]{}, windows{};
     int width{}, height{};
+    // Port/eame: the framebuffer to draw the result into. On iOS that is the
+    // window's own framebuffer object, never 0 (EAGL has no default one).
+    GLint screen{};
     std::vector<float> vertices;
     ~Impl() {
         if (layer.id) glDeleteProgram(layer.id);
@@ -126,7 +129,7 @@ struct SceneEffectsRenderer::Impl {
         glUniform1i(p.invert, scene.effects->invert);
     }
     void cleanup(const GLint* viewport) {
-        glUseProgram(0); glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glUseProgram(0); glBindFramebuffer(GL_FRAMEBUFFER, GLuint(screen));
         glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
         for (int unit : {2, 1}) {
             glActiveTexture(GL_TEXTURE0 + unit); glBindTexture(GL_TEXTURE_2D, 0);
@@ -149,6 +152,7 @@ void SceneEffectsRenderer::draw(const DirectScenePicture& picture, unsigned atla
             quad.v > scene.atlas_height || quad.height > scene.atlas_height - quad.v)
             throw std::invalid_argument("Scene effect primitive exceeds its atlas");
     auto& gl = *impl_; GLint viewport[4]; glGetIntegerv(GL_VIEWPORT, viewport);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &gl.screen);
     if (viewport[2] <= 0 || viewport[3] <= 0) return;
     try {
         glActiveTexture(GL_TEXTURE0); gl.storage(viewport[2], viewport[3]);
@@ -208,7 +212,7 @@ void SceneEffectsRenderer::draw(const DirectScenePicture& picture, unsigned atla
             batch.flush();
         }
         glDisable(GL_SCISSOR_TEST); glDisable(GL_STENCIL_TEST); glDisable(GL_DEPTH_TEST);
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, GLuint(gl.screen));
         glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
         glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, gl.images[1]);
         glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, gl.images[0]);

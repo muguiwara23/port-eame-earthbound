@@ -394,6 +394,9 @@ int run_application(int argc, char **argv) {
 
 #ifndef _WIN32
 #ifdef SDL_PLATFORM_IOS
+void eb::show_desktop_error(const std::string &message) {
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "EarthBound", message.c_str(), nullptr);
+}
 #include <cstdio>
 #include <ctime>
 #include <fcntl.h>
