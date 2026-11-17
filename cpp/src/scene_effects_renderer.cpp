@@ -80,6 +80,10 @@ struct SceneEffectsRenderer::Impl {
     // Port/eame: the framebuffer to draw the result into. On iOS that is the
     // window's own framebuffer object, never 0 (EAGL has no default one).
     GLint screen{};
+    // And the renderbuffer bound: iOS presents the frame from the bound one
+    // (SDL leaves the window's bound and expects it back), so binding 0 here
+    // left every later frame unpresented: a black screen.
+    GLint screen_renderbuffer{};
     std::vector<float> vertices;
     ~Impl() {
         if (layer.id) glDeleteProgram(layer.id);
@@ -116,7 +120,7 @@ struct SceneEffectsRenderer::Impl {
             glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_stencil);
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depth_stencil);
-            glBindRenderbuffer(GL_RENDERBUFFER, 0);
+            glBindRenderbuffer(GL_RENDERBUFFER, GLuint(screen_renderbuffer));
             width = w; height = h;
         }
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, images[0], 0);
@@ -153,6 +157,7 @@ void SceneEffectsRenderer::draw(const DirectScenePicture& picture, unsigned atla
             throw std::invalid_argument("Scene effect primitive exceeds its atlas");
     auto& gl = *impl_; GLint viewport[4]; glGetIntegerv(GL_VIEWPORT, viewport);
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &gl.screen);
+    glGetIntegerv(GL_RENDERBUFFER_BINDING, &gl.screen_renderbuffer);
     if (viewport[2] <= 0 || viewport[3] <= 0) return;
     try {
         glActiveTexture(GL_TEXTURE0); gl.storage(viewport[2], viewport[3]);

@@ -248,6 +248,11 @@ struct DesktopDisplay::Impl {
     bool events(std::uint16_t &buttons) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_WILL_ENTER_BACKGROUND || event.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
+                if (!wait_for_foreground())
+                    return false;
+                continue;
+            }
             if (touch_event(event))
                 continue;
             const bool was_visible = panel_ && panel_->visible();
@@ -409,6 +414,23 @@ struct DesktopDisplay::Impl {
         touch_->layout(drawable_width, drawable_height, picture_left, picture_left + view_width, density, left,
                        std::max(0, right), std::max(0, bottom));
         touch_->draw();
+    }
+    // Port/eame: iOS may not draw from the background (it refuses the GPU
+    // work), so the game and its drawing wait here, with the controls let
+    // go, until the app is back. False when the app is closed meanwhile.
+    bool wait_for_foreground() {
+        std::cout << "In the background: paused" << std::endl;
+        touch_->block(true);
+        SDL_Event event;
+        while (SDL_WaitEvent(&event)) {
+            if (event.type == SDL_EVENT_DID_ENTER_FOREGROUND)
+                break;
+            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_TERMINATING)
+                return false;
+        }
+        touch_->block(false);
+        std::cout << "In the foreground: resumed" << std::endl;
+        return true;
     }
     std::unique_ptr<TouchControls> touch_;
     bool touch_mouse_on_controls_ = false;
