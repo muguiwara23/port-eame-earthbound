@@ -1,0 +1,44 @@
+name: Port/eame iOS
+
+# Port/eame: the unsigned iOS app (EarthBound / Mother 2). Run by hand only
+# (Actions > Port/eame iOS > Run workflow) so one build at a time has the
+# macOS runner. No ROM, asset pack, secret or signing identity is used.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: port-eame-ios-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ios:
+    name: iOS build and unsigned IPA (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          command -v ninja || brew install ninja
+          cmake --version | head -1
+          ninja --version
+      - name: Build SDL3 for iOS, the game, and the unsigned IPA
+        env:
+          PORTEAME_VERSION: 0.5-ios-dev.${{ github.run_number }}
+        run: bash ios/build_ios.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: earthbound-ios-unsigned-ipa
+          path: |
+            build/ios/release/*.ipa
+            build/ios/release/*.ipa.sha256
+          if-no-files-found: error
+          retention-days: 30
+      - name: Build log on failure
+        if: failure()
+        run: |
+          ls -la build/ios || true
+          tail -n 200 build/ios/build/CMakeFiles/CMakeError.log 2>/dev/null || true

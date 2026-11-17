@@ -40,6 +40,25 @@ struct DebugPanel::Impl {
     std::optional<SaveStateSnapshotRequest> snapshot_action;
 };
 
+
+namespace {
+// Port/eame: on iOS the panels are used with fingers on a high-density screen:
+// everything half again as large, and the font rasterized at the screen's
+// pixels (ImGui works in points) so it stays sharp.
+void scale_for_touch(SDL_Window* window) {
+#ifdef SDL_PLATFORM_IOS
+    const float density = std::max(1.0f, SDL_GetWindowPixelDensity(window));
+    constexpr float scale = 1.5f;
+    ImGui::GetStyle().ScaleAllSizes(scale);
+    ImFontConfig font;
+    font.SizePixels = 13.0f * scale * density;
+    ImGui::GetIO().Fonts->AddFontDefault(&font);
+    ImGui::GetIO().FontGlobalScale = 1.0f / density;
+#else
+    (void)window;
+#endif
+}
+}
 DebugPanel::DebugPanel(SDL_Window* window, SDL_GLContext context): impl_(std::make_unique<Impl>()) {
     IMGUI_CHECKVERSION();
     impl_->context = ImGui::CreateContext();
@@ -57,6 +76,7 @@ DebugPanel::DebugPanel(SDL_Window* window, SDL_GLContext context): impl_(std::ma
     style.Colors[ImGuiCol_WindowBg] = ImVec4(0.075f, 0.085f, 0.11f, 0.98f);
     style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.12f, 0.19f, 0.27f, 1.0f);
     style.Colors[ImGuiCol_CheckMark] = ImVec4(0.35f, 0.75f, 0.95f, 1.0f);
+    scale_for_touch(window);
     if (!ImGui_ImplSDL3_InitForOpenGL(window, context)) {
         ImGui::DestroyContext(impl_->context);
         throw std::runtime_error("Could not initialize the debug panel SDL backend");
@@ -638,6 +658,7 @@ AssetImportPanel::AssetImportPanel(SDL_Window* window, SDL_GLContext context): i
     style.FrameRounding = 4.0f;
     style.WindowPadding = ImVec2(20.0f, 20.0f);
     style.ItemSpacing = ImVec2(10.0f, 12.0f);
+    scale_for_touch(window);
     if (!ImGui_ImplSDL3_InitForOpenGL(window, context)) {
         ImGui::DestroyContext(impl_->context);
         throw std::runtime_error("Could not initialize the import screen SDL backend");
@@ -647,7 +668,12 @@ AssetImportPanel::AssetImportPanel(SDL_Window* window, SDL_GLContext context): i
         ImGui::DestroyContext(impl_->context);
         throw std::runtime_error("Could not initialize the import screen OpenGL backend");
     }
+#ifdef SDL_PLATFORM_IOS
+    // Port/eame: the app's Documents folder, where the Files app puts the ROM.
+    const char* home = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+#else
     const char* home = SDL_getenv("HOME");
+#endif
     // A familiar starting directory on either platform; typing a full path and
     // drag-and-drop remain available if the home directory cannot be resolved.
     if (!home || !*home) home = SDL_getenv("USERPROFILE");

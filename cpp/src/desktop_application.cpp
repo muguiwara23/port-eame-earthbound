@@ -17,6 +17,7 @@
 // Port/eame: on iOS SDL3 starts the UIKit application (with its scene) and
 // calls main inside it; elsewhere SDL_MAIN_HANDLED keeps main as it is.
 #include <SDL3/SDL_main.h>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -69,6 +70,29 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
             default_asset_path = !(environment && *environment);
             options.assets = default_asset_path ? preferences + game_basename(game) + ".ebpak" : environment;
         }
+#ifdef SDL_PLATFORM_IOS
+        // Port/eame: a supported ROM the player put in Documents (Files app)
+        // is imported once, as --import-rom would be; without one, the setup
+        // screen opens there.
+        if (options.import_rom.empty() && default_asset_path &&
+            !std::filesystem::exists(native_path(preferences + game_basename(eb::GameVersion::US) + ".ebpak")) &&
+            !std::filesystem::exists(native_path(preferences + game_basename(eb::GameVersion::JP) + ".ebpak"))) {
+            std::error_code ec;
+            for (const auto &entry : std::filesystem::directory_iterator(native_path(preferences), ec)) {
+                auto extension = entry.path().extension().string();
+                for (auto &c : extension) c = char(std::tolower(static_cast<unsigned char>(c)));
+                if ((extension != ".sfc" && extension != ".smc") || !entry.is_regular_file(ec))
+                    continue;
+                try {
+                    eb::identify_rom(entry.path(), eb::asset_profiles());
+                    options.import_rom = entry.path().string();
+                    break;
+                } catch (const std::exception &) {
+                    // Not a supported image: leave it for the setup screen to explain.
+                }
+            }
+        }
+#endif
         if (!options.import_rom.empty()) {
             // Identify by contents first, then select the default output filename.
             // An explicit --game acts as a compatibility constraint, not a guess.

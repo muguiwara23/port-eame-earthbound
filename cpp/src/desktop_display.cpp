@@ -11,6 +11,7 @@
 #include "eb/launch_options.hpp"
 #include "eb/session_storage.hpp"
 #include "desktop_input.hpp"
+#include "touch_controls.hpp"
 #include "generated_assets.hpp"
 #include "gl_es.hpp"
 #include <SDL3/SDL.h>
@@ -105,8 +106,14 @@ struct DesktopDisplay::Impl {
                 window_width = int(window_width * fit);
                 window_height = int(window_height * fit);
             }
-            window_ = SDL_CreateWindow("Phase Distorter", window_width, window_height,
-                                       SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+            SDL_WindowFlags flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+#ifdef SDL_PLATFORM_IOS
+            // Port/eame: a phone game in landscape from its first frame (the
+            // hint must come before the window), over the whole screen.
+            SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+            flags |= SDL_WINDOW_FULLSCREEN | SDL_WINDOW_BORDERLESS;
+#endif
+            window_ = SDL_CreateWindow("Phase Distorter", window_width, window_height, flags);
             if (!window_)
                 throw std::runtime_error(std::string("SDL_CreateWindow: ") + SDL_GetError());
             eb::set_app_icon(window_);
@@ -121,6 +128,7 @@ struct DesktopDisplay::Impl {
             if (settings_.crt_filter) presenter_->prepare_crt();
             input_ = std::make_unique<DesktopInput>();
             input_->configure(controller_settings_);
+            touch_ = std::make_unique<TouchControls>();
             std::cout << "OpenGL: " << glGetString(GL_VERSION) << " / " << glGetString(GL_RENDERER) << '\n';
         } catch (...) {
             cleanup();
@@ -222,6 +230,8 @@ struct DesktopDisplay::Impl {
     bool events(std::uint16_t &buttons) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+            if (touch_event(event))
+                continue;
             const bool was_visible = panel_ && panel_->visible();
             const bool consumed = panel_ && panel_->process_event(event);
             if (panel_ && !was_visible && panel_->visible())
@@ -240,11 +250,14 @@ struct DesktopDisplay::Impl {
                 return false;
             input_->process_device_event(event);
         }
+        if (touch_->take_menu() && panel_)
+            panel_->set_visible(!panel_->visible());
         // Scripted input is deterministic test/game input, independent of the UI.
         // Only physical keyboard/controller input is captured by the open panel.
         if (panel_ && panel_->captures_game_input())
             return true;
         buttons |= input_->buttons();
+        buttons |= touch_->buttons();
         return true;
     }
 
@@ -261,6 +274,7 @@ struct DesktopDisplay::Impl {
             presenter_->draw(picture.pixels, int(picture.width), height, drawable_width, drawable_height,
                              aspect, top_inset);
         presenter_->apply_crt(settings_.crt_filter);
+        draw_touch_controls(drawable_width, drawable_height, aspect, top_inset);
         if (panel_) {
             // Copy observations rather than exposing mutable hardware to the UI.
             // Formatting full register strings is only needed for a visible panel.
@@ -312,6 +326,72 @@ struct DesktopDisplay::Impl {
     }
 
   private:
+    // Port/eame: the on-screen controller (touch_controls.hpp). Fingers come in
+    // window-relative (0-1) coordinates; the controls work in drawable pixels.
+    float pixel_density() const {
+        int w = 0, pw = 0;
+        SDL_GetWindowSize(window_, &w, nullptr);
+        SDL_GetWindowSizeInPixels(window_, &pw, nullptr);
+        return w > 0 ? float(pw) / float(w) : 1.f;
+    }
+    bool touch_event(const SDL_Event &event) {
+        int dw = 0, dh = 0;
+        SDL_GetWindowSizeInPixels(window_, &dw, &dh);
+        switch (event.type) {
+        case SDL_EVENT_FINGER_DOWN: case SDL_EVENT_FINGER_MOTION: case SDL_EVENT_FINGER_UP: case SDL_EVENT_FINGER_CANCELED: {
+            const auto kind = event.type == SDL_EVENT_FINGER_DOWN     ? TouchControls::FingerDown
+                              : event.type == SDL_EVENT_FINGER_MOTION ? TouchControls::FingerMove
+                                                                      : TouchControls::FingerUp;
+            touch_->finger(kind, std::uint64_t(event.tfinger.fingerID), event.tfinger.x * dw, event.tfinger.y * dh);
+            return true; // the panel takes touches through the mouse events SDL makes of them
+        }
+        case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP: case SDL_EVENT_MOUSE_MOTION: {
+            // Those mouse events are the controls' where a control is.
+            const bool button = event.type != SDL_EVENT_MOUSE_MOTION;
+            if ((button ? event.button.which : event.motion.which) != SDL_TOUCH_MOUSEID)
+                return false;
+            const float density = pixel_density();
+            const float x = (button ? event.button.x : event.motion.x) * density,
+                        y = (button ? event.button.y : event.motion.y) * density;
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+                touch_mouse_on_controls_ = touch_->covers(x, y);
+            const bool ours = touch_mouse_on_controls_;
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_UP)
+                touch_mouse_on_controls_ = false;
+            return ours;
+        }
+        case SDL_EVENT_KEY_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+            touch_->other_input();
+            return false;
+        default:
+            return false;
+        }
+    }
+    void draw_touch_controls(int drawable_width, int drawable_height, double aspect, int top_inset) {
+        // Laid out every frame (it keeps its pictures while nothing moved), so
+        // the first touch already lands on the right places.
+        touch_->block(panel_ && panel_->visible());
+        // The picture's columns, as FramePresenter::begin_draw places it.
+        const int game_height = drawable_height - std::clamp(top_inset, 0, std::max(0, drawable_height - 1));
+        const double view_height = std::min(double(game_height), double(drawable_width) / aspect);
+        const int view_width = std::min(drawable_width, int(std::lround(view_height * aspect)));
+        const int picture_left = (drawable_width - view_width) / 2;
+        const float density = pixel_density();
+        int left = 0, right = 0, bottom = 0;
+        SDL_Rect safe{};
+        int ww = 0, wh = 0;
+        SDL_GetWindowSize(window_, &ww, &wh);
+        if (SDL_GetWindowSafeArea(window_, &safe) && ww > 0 && wh > 0) {
+            left = int(safe.x * density);
+            right = int((ww - safe.x - safe.w) * density);
+            bottom = int((wh - safe.y - safe.h) * density);
+        }
+        touch_->layout(drawable_width, drawable_height, picture_left, picture_left + view_width, density, left,
+                       std::max(0, right), std::max(0, bottom));
+        touch_->draw();
+    }
+    std::unique_ptr<TouchControls> touch_;
+    bool touch_mouse_on_controls_ = false;
 #ifdef __linux__
     std::optional<int> previous_nice_;
 #endif
@@ -396,6 +476,7 @@ struct DesktopDisplay::Impl {
         // Destroy GL clients before deleting their context, then SDL last. The
         // same path handles both normal destruction and partial construction.
         input_.reset();
+        touch_.reset();
         panel_.reset();
         presenter_.reset();
         if (context_)
