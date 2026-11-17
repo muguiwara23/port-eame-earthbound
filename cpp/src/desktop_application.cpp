@@ -207,6 +207,29 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
                 wait_for_presentation(deadline);
         };
 
+        // Port/eame: iOS can end the app in the background without a normal
+        // exit, which is when the desktop writes these. Keep them on the way
+        // there, and the battery save whenever the game changes it.
+        std::vector<std::uint8_t> stored_save;
+        const auto keep_save = [&] {
+            if (options.save.empty()) return;
+            const auto memory = session.save_memory();
+            if (std::equal(memory.begin(), memory.end(), stored_save.begin(), stored_save.end())) return;
+            store_save(options.save, memory);
+            stored_save.assign(memory.begin(), memory.end());
+        };
+        {
+            const auto memory = session.save_memory();
+            stored_save.assign(memory.begin(), memory.end());
+        }
+        if (display)
+            display->set_background_handler([&] {
+                keep_save();
+                store_display_settings(options.config, settings, game);
+                std::cout << "Saved the game and the settings" << std::endl;
+            });
+        std::uint64_t next_save_check = 0;
+
         int status = 0;
         try {
             for (;;) {
@@ -288,6 +311,14 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
                     input.buttons_for_frame(session.frames(), options.replay_only ? 0 : physical_buttons);
                 const auto completed_frames = session.advance_frame(buttons, options.steps);
                 drain_audio();
+                if (display && session.frames() >= next_save_check) { // about every 5 seconds
+                    next_save_check = session.frames() + 300;
+                    try {
+                        keep_save();
+                    } catch (const std::exception &error) {
+                        std::cerr << "Could not keep the save: " << error.what() << '\n';
+                    }
+                }
                 presentation.simulation_finished(session.presentation_frame(), completed_frames,
                                                  std::chrono::steady_clock::now());
                 present_and_wait();
@@ -302,6 +333,8 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
             presentation.refresh_after_error(session.presentation_frame());
         }
 
+        if (display)
+            display->set_background_handler({});
         drain_audio();
         if (wave)
             wave->finish();

@@ -10,6 +10,7 @@
 #include "backends/imgui_impl_sdl3.h"
 
 #include <algorithm>
+#include <ctime>
 #include <array>
 #include <cmath>
 #include <cctype>
@@ -38,6 +39,7 @@ struct DebugPanel::Impl {
     std::array<char, 129> snapshot_name{};
     std::string selected_snapshot, delete_snapshot, snapshot_status;
     std::optional<SaveStateSnapshotRequest> snapshot_action;
+    bool close_request = false; // Port/eame (iOS)
 };
 
 
@@ -164,6 +166,7 @@ void DebugPanel::set_controller_settings(ControllerSettings settings) {
     impl_->controller_settings = settings;
 }
 std::optional<GameDebugRequest> DebugPanel::take_game_action() {return std::exchange(impl_->game_action,std::nullopt);}
+bool DebugPanel::take_close_request() { return std::exchange(impl_->close_request, false); }
 std::optional<SaveStateSnapshotRequest> DebugPanel::take_snapshot_action() {
     return std::exchange(impl_->snapshot_action, std::nullopt);
 }
@@ -204,6 +207,13 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
         const auto title = diagnostics.game_title + " control panel###EBControlPanel";
         // The ### suffix gives the window a stable identity across title changes.
         if (ImGui::Begin(title.c_str(), &impl_->visible)) {
+#ifdef SDL_PLATFORM_IOS
+            // Port/eame: an iOS app has no window to close. This writes the
+            // in-game save and the settings, then ends the app.
+            if (ImGui::Button("Save and close the game")) impl_->close_request = true;
+            ImGui::TextDisabled("Your in-game save and these settings are also kept when you leave the app.");
+            ImGui::Separator();
+#endif
             if (ImGui::BeginTabBar("Control panel tabs")) {
                 if (ImGui::BeginTabItem("Display")) {
                     ImGui::Spacing();
@@ -402,9 +412,23 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                     const bool has_name = std::any_of(impl_->snapshot_name.begin(),
                         impl_->snapshot_name.begin() + std::char_traits<char>::length(impl_->snapshot_name.data()),
                         [](unsigned char value) { return !std::isspace(value); });
+#ifdef SDL_PLATFORM_IOS
+                    // Port/eame: typing a name on a phone is optional; without
+                    // one the snapshot is named by the date and time.
+                    std::string snapshot_name = impl_->snapshot_name.data();
+                    if (!has_name) {
+                        const std::time_t now = std::time(nullptr);
+                        char stamp[32];
+                        std::strftime(stamp, sizeof stamp, "Save %Y-%m-%d %H.%M.%S", std::localtime(&now));
+                        snapshot_name = stamp;
+                    }
+                    ImGui::BeginDisabled(!diagnostics.snapshots_available);
+#else
+                    const std::string snapshot_name = impl_->snapshot_name.data();
                     ImGui::BeginDisabled(!diagnostics.snapshots_available || !has_name);
+#endif
                     if (ImGui::Button("Save snapshot"))
-                        impl_->snapshot_action = SaveStateSnapshotRequest{SaveStateSnapshotRequest::Kind::Save, impl_->snapshot_name.data()};
+                        impl_->snapshot_action = SaveStateSnapshotRequest{SaveStateSnapshotRequest::Kind::Save, snapshot_name};
                     ImGui::EndDisabled();
                     if (ImGui::GetContentRegionAvail().x >= 250.0f) ImGui::SameLine();
                     if (ImGui::Button("Refresh snapshots"))

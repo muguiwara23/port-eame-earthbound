@@ -68,6 +68,8 @@ public:
     const ControllerSettings& controller_settings() const;
     void set_controller_settings(ControllerSettings settings);
     std::optional<GameDebugRequest> take_game_action();
+    // Port/eame (iOS): "Save and close" was tapped since the last call.
+    bool take_close_request();
     std::optional<SaveStateSnapshotRequest> take_snapshot_action();
     // Logical SDL height of the top bar. Windowed mode reserves this strip;
     // fullscreen reveals it as an overlay only while the pointer is at the top.

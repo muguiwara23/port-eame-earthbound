@@ -275,6 +275,8 @@ struct DesktopDisplay::Impl {
         }
         if (touch_->take_menu() && panel_)
             panel_->set_visible(!panel_->visible());
+        if (panel_ && panel_->take_close_request())
+            return false; // the game loop ends: the save and settings are written
         // Scripted input is deterministic test/game input, independent of the UI.
         // Only physical keyboard/controller input is captured by the open panel.
         if (panel_ && panel_->captures_game_input())
@@ -350,6 +352,8 @@ struct DesktopDisplay::Impl {
         SDL_GL_SwapWindow(window_);
     }
 
+    void set_background_handler(std::function<void()> handler) { background_handler_ = std::move(handler); }
+
   private:
     // Port/eame: the on-screen controller (touch_controls.hpp). Fingers come in
     // window-relative (0-1) coordinates; the controls work in drawable pixels.
@@ -420,6 +424,13 @@ struct DesktopDisplay::Impl {
     // go, until the app is back. False when the app is closed meanwhile.
     bool wait_for_foreground() {
         std::cout << "In the background: paused" << std::endl;
+        if (background_handler_) {
+            try {
+                background_handler_();
+            } catch (const std::exception &error) {
+                std::cerr << "Could not save before the background: " << error.what() << '\n';
+            }
+        }
         touch_->block(true);
         SDL_Event event;
         while (SDL_WaitEvent(&event)) {
@@ -432,6 +443,7 @@ struct DesktopDisplay::Impl {
         std::cout << "In the foreground: resumed" << std::endl;
         return true;
     }
+    std::function<void()> background_handler_;
     std::unique_ptr<TouchControls> touch_;
     bool touch_mouse_on_controls_ = false;
 #ifdef __linux__
@@ -566,6 +578,9 @@ void DesktopDisplay::start_panel(bool visible, const std::string &title, const s
 }
 bool DesktopDisplay::poll_events(std::uint16_t &physical_buttons) {
     return impl_->events(physical_buttons);
+}
+void DesktopDisplay::set_background_handler(std::function<void()> handler) {
+    impl_->set_background_handler(std::move(handler));
 }
 void DesktopDisplay::update_debug(GameDebug &debug) {
     impl_->update_debug(debug);

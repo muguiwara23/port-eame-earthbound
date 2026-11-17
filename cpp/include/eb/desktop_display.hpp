@@ -4,6 +4,7 @@
 #include "eb/presentation_frame.hpp"
 #include "eb/snapshot_types.hpp"
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -33,6 +34,9 @@ class DesktopDisplay {
     void start_panel(bool visible, const std::string &game_title, const std::string &preferences,
                      GameVersion game, const std::string &custom_assets);
     bool poll_events(std::uint16_t &physical_buttons);
+    // Port/eame: called when the app is about to go to the background (iOS
+    // may end it there without warning), to keep the save and the settings.
+    void set_background_handler(std::function<void()> handler);
     void update_debug(GameDebug &debug);
     void adopt_debug(const GameDebug &debug);
     std::optional<GameVersion> take_game_request();
