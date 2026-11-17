@@ -140,12 +140,27 @@ struct DesktopDisplay::Impl {
     Impl &operator=(const Impl &) = delete;
 
     eb::GameAssets import_assets(std::string &path, const std::string &error,
-                                 const std::string &default_directory, bool lock_game, eb::GameVersion game) {
+                                 const std::string &default_directory, bool lock_game, eb::GameVersion game,
+                                 const std::string &found_rom = {}) {
         // This temporary panel is destroyed before the in-game panel is created.
         // No CPU/APU/bus exists yet, so invalid input cannot start partial gameplay.
         eb::AssetImportPanel importer(window_, context_);
         if (!error.empty())
             importer.set_error(error);
+        std::optional<std::string> found;
+        if (!found_rom.empty()) {
+            // Port/eame: show the screen saying so (one frame) before the import's
+            // work, so iOS sees the app draw and the player sees what it does.
+            importer.set_status("Importing " + found_rom + " ...");
+            int dw{}, dh{};
+            SDL_GetWindowSizeInPixels(window_, &dw, &dh);
+            glViewport(0, 0, dw, dh);
+            glClearColor(0.035f, 0.043f, 0.065f, 1.f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            importer.draw();
+            SDL_GL_SwapWindow(window_);
+            found = found_rom;
+        }
         while (!importer.exit_requested()) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -161,7 +176,10 @@ struct DesktopDisplay::Impl {
             glClear(GL_COLOR_BUFFER_BIT);
             importer.draw();
             SDL_GL_SwapWindow(window_);
-            if (const auto rom = importer.take_import_request()) {
+            auto rom = importer.take_import_request();
+            if (!rom)
+                rom = std::exchange(found, std::nullopt);
+            if (rom) {
                 try {
                     const auto profile = eb::identify_rom(native_path(*rom), eb::asset_profiles());
                     if (lock_game && profile.version != game)
@@ -514,8 +532,9 @@ DesktopDisplay::DesktopDisplay(const LaunchOptions &options, DisplaySettings &se
     : impl_(std::make_unique<Impl>(options, settings)) {}
 DesktopDisplay::~DesktopDisplay() = default;
 GameAssets DesktopDisplay::import_assets(std::string &path, const std::string &error,
-                                         const std::string &directory, bool lock_game, GameVersion game) {
-    return impl_->import_assets(path, error, directory, lock_game, game);
+                                         const std::string &directory, bool lock_game, GameVersion game,
+                                         const std::string &found_rom) {
+    return impl_->import_assets(path, error, directory, lock_game, game, found_rom);
 }
 void DesktopDisplay::start_panel(bool visible, const std::string &title, const std::string &preferences,
                                  GameVersion game, const std::string &custom_assets) {

@@ -25,8 +25,11 @@ class DesktopDisplay {
     DesktopDisplay(const DesktopDisplay &) = delete;
     DesktopDisplay &operator=(const DesktopDisplay &) = delete;
 
+    // found_rom (Port/eame, iOS): a ROM found in Documents, imported at once
+    // with the setup screen showing that it is.
     GameAssets import_assets(std::string &path, const std::string &error,
-                             const std::string &default_directory, bool lock_game, GameVersion game);
+                             const std::string &default_directory, bool lock_game, GameVersion game,
+                             const std::string &found_rom = {});
     void start_panel(bool visible, const std::string &game_title, const std::string &preferences,
                      GameVersion game, const std::string &custom_assets);
     bool poll_events(std::uint16_t &physical_buttons);

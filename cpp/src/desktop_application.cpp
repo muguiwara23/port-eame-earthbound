@@ -70,10 +70,12 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
             default_asset_path = !(environment && *environment);
             options.assets = default_asset_path ? preferences + game_basename(game) + ".ebpak" : environment;
         }
+        std::string found_rom;
 #ifdef SDL_PLATFORM_IOS
         // Port/eame: a supported ROM the player put in Documents (Files app)
-        // is imported once, as --import-rom would be; without one, the setup
-        // screen opens there.
+        // is imported once, by the setup screen as soon as the window shows
+        // (iOS wants the app to draw promptly); without one, the setup screen
+        // opens there.
         if (options.import_rom.empty() && default_asset_path &&
             !std::filesystem::exists(native_path(preferences + game_basename(eb::GameVersion::US) + ".ebpak")) &&
             !std::filesystem::exists(native_path(preferences + game_basename(eb::GameVersion::JP) + ".ebpak"))) {
@@ -85,7 +87,8 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
                     continue;
                 try {
                     eb::identify_rom(entry.path(), eb::asset_profiles());
-                    options.import_rom = entry.path().string();
+                    found_rom = entry.path().string();
+                    std::cout << "Found a supported ROM in Documents: " << found_rom << std::endl;
                     break;
                 } catch (const std::exception &) {
                     // Not a supported image: leave it for the setup screen to explain.
@@ -103,6 +106,7 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
             game = profile.version;
             if (default_asset_path)
                 options.assets = preferences + game_basename(game) + ".ebpak";
+            std::cout << "Importing " << profile.title << " from " << options.import_rom << " ..." << std::endl;
             eb::import_assets(native_path(options.import_rom), native_path(options.assets), profile.layout);
             std::cout << "Imported " << profile.title << " assets: " << options.assets << '\n';
         }
@@ -135,7 +139,7 @@ int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
         if (program.image.empty() && display)
             program =
                 display->import_assets(options.assets, import_error, default_asset_path ? preferences : "",
-                                       options.game_override, game);
+                                       options.game_override, game, found_rom);
         if (program.image.empty())
             return 0; // The user closed first-run setup.
         if (options.game_override && program.version != game)
@@ -389,7 +393,40 @@ int run_application(int argc, char **argv) {
 } // namespace eb
 
 #ifndef _WIN32
+#ifdef SDL_PLATFORM_IOS
+#include <cstdio>
+#include <ctime>
+#include <fcntl.h>
+#include <unistd.h>
+// Port/eame: an iOS app has no console. Its output goes to Documents/
+// port-eame-log.txt (the previous run's kept as port-eame-log.old.txt),
+// unbuffered, so the Files app shows what happened even after a crash.
+static void ios_log_to_documents() {
+    const char *documents = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    if (!documents)
+        return;
+    std::string folder(documents);
+    if (!folder.ends_with("/"))
+        folder += "/";
+    const std::string log = folder + "port-eame-log.txt", old = folder + "port-eame-log.old.txt";
+    std::rename(log.c_str(), old.c_str());
+    const int fd = open(log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0)
+        return;
+    dup2(fd, STDOUT_FILENO);
+    dup2(fd, STDERR_FILENO);
+    close(fd);
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+    const std::time_t now = std::time(nullptr);
+    std::printf("Port/eame iOS: started %s", std::ctime(&now));
+    std::printf("Port/eame iOS: documents %s\n", folder.c_str());
+}
+#endif
 int main(int argc, char **argv) {
+#ifdef SDL_PLATFORM_IOS
+    ios_log_to_documents();
+#endif
     return eb::run_application(argc, argv);
 }
 #endif
