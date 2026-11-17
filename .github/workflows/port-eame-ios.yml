@@ -5,6 +5,14 @@ name: Port/eame iOS
 # macOS runner. No ROM, asset pack, secret or signing identity is used.
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Mac to build on (Intel when Apple-silicon Macs are busy; both build the arm64 iOS app)
+        type: choice
+        default: macos-15-intel
+        options:
+          - macos-15-intel
+          - macos-15
 
 permissions:
   contents: read
@@ -15,8 +23,8 @@ concurrency:
 
 jobs:
   ios:
-    name: iOS build and unsigned IPA (macos-15)
-    runs-on: macos-15
+    name: iOS build and unsigned IPA (${{ inputs.runner }})
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
