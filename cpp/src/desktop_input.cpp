@@ -5,73 +5,64 @@
 
 namespace eb {
 DesktopInput::DesktopInput() {
-    // The game maps by physical position. SDL defaults to printed Nintendo
-    // labels, which otherwise reverses both face-button pairs on NSO pads.
-    SDL_SetHintWithPriority(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0", SDL_HINT_OVERRIDE);
-    SDL_version version{};
-    SDL_GetVersion(&version);
-    if (SDL_VERSIONNUM(version.major, version.minor, version.patch) >= SDL_VERSIONNUM(2, 26, 0)) {
-        // SDL2 lacks these Linux hid-nintendo mappings. Use SDL's upstream
-        // positional rows, including name CRCs: Genesis Bluetooth shares the
-        // SNES product ID, so matching VID/PID alone would be unsafe.
-        // https://github.com/libsdl-org/SDL/blob/main/src/joystick/SDL_gamepad_db.h
-        for (const char *mapping : {"030000007e0500001720000011810000,Nintendo SNES "
-                                    "Controller,crc:f648,a:b0,b:b1,back:b8,dpdown:h0.4,dpleft:h0.8,"
-                                    "dpright:h0.2,dpup:h0.1,leftshoulder:b4,lefttrigger:b6,rightshoulder:"
-                                    "b5,righttrigger:b7,start:b9,x:b3,y:b2,platform:Linux,",
-                                    "050000007e0500001720000001800000,Nintendo SNES "
-                                    "Controller,crc:dbc0,a:b0,b:b1,back:b8,dpdown:h0.4,dpleft:h0.8,"
-                                    "dpright:h0.2,dpup:h0.1,leftshoulder:b4,lefttrigger:b6,rightshoulder:"
-                                    "b5,righttrigger:b7,start:b9,x:b3,y:b2,platform:Linux,"})
-            SDL_GameControllerAddMapping(mapping);
+    // Port/eame: SDL3 reports gamepad buttons by position (south, east, ...)
+    // and its database already has the hid-nintendo SNES mappings SDL2
+    // lacked, so neither the label hint nor added mappings are needed.
+    int count = 0;
+    if (SDL_JoystickID *pads = SDL_GetGamepads(&count)) {
+        for (int i = 0; i < count; ++i)
+            open_controller(pads[i]);
+        SDL_free(pads);
     }
-    for (int index = 0; index < SDL_NumJoysticks(); ++index)
-        open_controller(index);
 }
 DesktopInput::~DesktopInput() {
     if (controller_)
-        SDL_GameControllerClose(controller_);
+        SDL_CloseGamepad(controller_);
 }
 void DesktopInput::process_device_event(const SDL_Event &event) {
-    if (event.type == SDL_CONTROLLERDEVICEADDED)
-        open_controller(event.cdevice.which);
-    if (event.type == SDL_CONTROLLERDEVICEREMOVED && controller_ &&
-        SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller_)) == event.cdevice.which) {
-        SDL_GameControllerClose(controller_);
+    if (event.type == SDL_EVENT_GAMEPAD_ADDED)
+        open_controller(event.gdevice.which);
+    if (event.type == SDL_EVENT_GAMEPAD_REMOVED && controller_ &&
+        SDL_GetGamepadID(controller_) == event.gdevice.which) {
+        SDL_CloseGamepad(controller_);
         controller_ = nullptr;
         // Select the next available pad, including one already connected.
-        for (int index = 0; index < SDL_NumJoysticks(); ++index)
-            open_controller(index);
+        int count = 0;
+        if (SDL_JoystickID *pads = SDL_GetGamepads(&count)) {
+            for (int i = 0; i < count; ++i)
+                open_controller(pads[i]);
+            SDL_free(pads);
+        }
     }
 }
 void DesktopInput::configure(const ControllerSettings &settings) {
     settings_ = settings;
     settings_.stick_deadzone = std::clamp(settings_.stick_deadzone, 0, 32766);
     for (auto &binding : settings_.bindings)
-        if (binding < -1 || binding >= SDL_CONTROLLER_BUTTON_MAX)
+        if (binding < -1 || binding >= SDL_GAMEPAD_BUTTON_COUNT)
             binding = -1;
 }
 ControllerSnapshot DesktopInput::controller_snapshot() const { return sample_controller(true); }
 ControllerSnapshot DesktopInput::sample_controller(bool include_identity) const {
     ControllerSnapshot snapshot;
-    if (!controller_ || !SDL_GameControllerGetAttached(controller_))
+    if (!controller_ || !SDL_GamepadConnected(controller_))
         return snapshot;
     snapshot.connected = true;
     if (include_identity) {
-        if (const char *name = SDL_GameControllerName(controller_))
+        if (const char *name = SDL_GetGamepadName(controller_))
             snapshot.name = name;
-        snapshot.nintendo_layout = SDL_GameControllerGetVendor(controller_) == 0x057e;
+        snapshot.nintendo_layout = SDL_GetGamepadVendor(controller_) == 0x057e;
     }
-    for (int button = 0; button < SDL_CONTROLLER_BUTTON_MAX; ++button)
+    for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; ++button)
         snapshot.pressed[button] =
-            SDL_GameControllerGetButton(controller_, static_cast<SDL_GameControllerButton>(button)) != 0;
+            SDL_GetGamepadButton(controller_, static_cast<SDL_GamepadButton>(button));
     for (unsigned index = 0; index < settings_.bindings.size(); ++index) {
         const int source = settings_.bindings[index];
-        if (source >= 0 && source < SDL_CONTROLLER_BUTTON_MAX && snapshot.pressed[source])
+        if (source >= 0 && source < SDL_GAMEPAD_BUTTON_COUNT && snapshot.pressed[source])
             snapshot.game_buttons |= std::uint16_t(1u << (15 - index));
     }
-    snapshot.stick_x = SDL_GameControllerGetAxis(controller_, SDL_CONTROLLER_AXIS_LEFTX);
-    snapshot.stick_y = SDL_GameControllerGetAxis(controller_, SDL_CONTROLLER_AXIS_LEFTY);
+    snapshot.stick_x = SDL_GetGamepadAxis(controller_, SDL_GAMEPAD_AXIS_LEFTX);
+    snapshot.stick_y = SDL_GetGamepadAxis(controller_, SDL_GAMEPAD_AXIS_LEFTY);
     if (snapshot.stick_x < -settings_.stick_deadzone)
         snapshot.game_buttons |= 1u << 9;
     if (snapshot.stick_x > settings_.stick_deadzone)
@@ -105,9 +96,9 @@ std::uint16_t DesktopInput::buttons() const {
 
     return buttons;
 }
-void DesktopInput::open_controller(int index) {
-    if (!controller_ && SDL_IsGameController(index))
-        controller_ = SDL_GameControllerOpen(index);
+void DesktopInput::open_controller(SDL_JoystickID id) {
+    if (!controller_ && SDL_IsGamepad(id))
+        controller_ = SDL_OpenGamepad(id);
 }
 
 } // namespace eb

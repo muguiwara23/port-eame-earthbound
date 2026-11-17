@@ -1,7 +1,7 @@
 #pragma once
 // Generated from the project's saturn.png by cpp/tools/make_app_icon.py.
 // This is launcher artwork; importing retail game assets remains a separate step.
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <array>
 #include <cstddef>
 
@@ -523,13 +523,13 @@ inline void set_app_icon(SDL_Window* window) {
         0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
         0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
     }};
-    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 64, 64, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Surface* surface = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
     if (!surface) return;
     // Respect the surface's row pitch instead of assuming tightly packed storage.
     for (std::size_t y = 0; y < 64; ++y)
         SDL_memcpy(static_cast<Uint8*>(surface->pixels) + y * surface->pitch,
                    rgba.data() + y * 64 * 4, 64 * 4);
     SDL_SetWindowIcon(window, surface);
-    SDL_FreeSurface(surface);
+    SDL_DestroySurface(surface);
 }
 } // namespace eb

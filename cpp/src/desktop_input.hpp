@@ -1,7 +1,7 @@
 #pragma once
 
 #include "eb/controller_settings.hpp"
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <cstdint>
 
 namespace eb {
@@ -19,9 +19,9 @@ class DesktopInput {
     void configure(const ControllerSettings &settings);
 
   private:
-    void open_controller(int index);
+    void open_controller(SDL_JoystickID id);
     ControllerSnapshot sample_controller(bool include_identity) const;
-    SDL_GameController *controller_ = nullptr;
+    SDL_Gamepad *controller_ = nullptr;
     ControllerSettings settings_;
 };
 } // namespace eb

@@ -4,8 +4,9 @@
 #include "eb/frame_presenter.hpp"
 #include "eb/display_settings.hpp"
 
-#include <SDL.h>
-#include <SDL_opengl.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
+#include "../src/gl_es.hpp"
 
 #include <algorithm>
 #include <array>
@@ -20,8 +21,7 @@ void verify(int scale, int horizontal_padding, int vertical_padding, int source_
             int top_inset = 0) {
     const int screen_width = source_width * scale + horizontal_padding * 2;
     const int screen_height = eb::FramePresenter::height * scale + vertical_padding * 2 + top_inset;
-    SDL_Window* window = SDL_CreateWindow("C++ framebuffer verification", SDL_WINDOWPOS_UNDEFINED,
-        SDL_WINDOWPOS_UNDEFINED, screen_width, screen_height, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    SDL_Window* window = SDL_CreateWindow("C++ framebuffer verification", screen_width, screen_height, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
     if (!window) throw std::runtime_error(std::string("SDL window: ") + SDL_GetError());
     SDL_GLContext context = SDL_GL_CreateContext(window);
     if (!context) {
@@ -40,7 +40,7 @@ void verify(int scale, int horizontal_padding, int vertical_padding, int source_
             }
         }
         int drawable_width{}, drawable_height{};
-        SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
+        SDL_GetWindowSizeInPixels(window, &drawable_width, &drawable_height);
         if (drawable_width != screen_width || drawable_height != screen_height)
             throw std::runtime_error("Test requires an unscaled SDL drawable");
         // A full-window capture taken first lets us detect retained inset state
@@ -157,11 +157,11 @@ void verify(int scale, int horizontal_padding, int vertical_padding, int source_
         std::cout << "Verified OpenGL " << screen_width << 'x' << screen_height
                   << " color/orientation/nearest scaling/letterbox pixels; top inset=" << top_inset << '\n';
     } catch (...) {
-        SDL_GL_DeleteContext(context);
+        SDL_GL_DestroyContext(context);
         SDL_DestroyWindow(window);
         throw;
     }
-    SDL_GL_DeleteContext(context);
+    SDL_GL_DestroyContext(context);
     SDL_DestroyWindow(window);
 }
 void verify_sixteen_ten() {
@@ -174,8 +174,7 @@ void verify_sixteen_ten() {
         throw std::runtime_error("16:10 must use a centered 358-column canvas and an exact display ratio");
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-    SDL_Window* window = SDL_CreateWindow("16:10 presentation verification", SDL_WINDOWPOS_UNDEFINED,
-        SDL_WINDOWPOS_UNDEFINED, screen_width, screen_height, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    SDL_Window* window = SDL_CreateWindow("16:10 presentation verification", screen_width, screen_height, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
     if (!window) throw std::runtime_error(std::string("SDL window: ") + SDL_GetError());
     SDL_GLContext context = SDL_GL_CreateContext(window);
     if (!context) {
@@ -184,7 +183,7 @@ void verify_sixteen_ten() {
     }
     try {
         int drawable_width{}, drawable_height{};
-        SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
+        SDL_GetWindowSizeInPixels(window, &drawable_width, &drawable_height);
         if (drawable_width != screen_width || drawable_height != screen_height)
             throw std::runtime_error("16:10 test requires an unscaled 1280x800 drawable");
         std::cout << "16:10 renderer: " << glGetString(GL_RENDERER) << '\n';
@@ -248,25 +247,26 @@ void verify_sixteen_ten() {
         }
         std::cout << "Verified 1280x800 16:10 framebuffer/direct-scene pixels with fullscreen and menu inset\n";
     } catch (...) {
-        SDL_GL_DeleteContext(context);
+        SDL_GL_DestroyContext(context);
         SDL_DestroyWindow(window);
         throw;
     }
-    SDL_GL_DeleteContext(context);
+    SDL_GL_DestroyContext(context);
     SDL_DestroyWindow(window);
 }
 } // namespace
 
 int main() {
     SDL_SetMainReady();
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
         std::cerr << "SDL_Init: " << SDL_GetError() << '\n';
         return 1;
     }
     int status = 0;
     try {
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
         SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
         verify(1, 0, 0);
         verify(3, 0, 0);

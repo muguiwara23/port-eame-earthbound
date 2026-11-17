@@ -12,7 +12,10 @@
 #include "eb/session_storage.hpp"
 #include "desktop_input.hpp"
 #include "generated_assets.hpp"
-#include <SDL_opengl.h>
+#include "gl_es.hpp"
+#include <SDL3/SDL.h>
+#define SDL_MAIN_NOIMPL // SDL_SetMainReady only; the entry point is desktop_application.cpp's
+#include <SDL3/SDL_main.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -33,21 +36,20 @@ constexpr int height = 224;
 struct DesktopDisplay::Impl {
   public:
     double frame_rate() const {
-        if (settings_.high_frame_rate() || SDL_GL_GetSwapInterval() == 0)
+        int interval = 0;
+        if (settings_.high_frame_rate() || !SDL_GL_GetSwapInterval(&interval) || interval == 0)
             return eb::FramePacer::frame_rate;
-        SDL_DisplayMode mode{};
-        const int display = SDL_GetWindowDisplayIndex(window_);
-        if (display < 0 || SDL_GetCurrentDisplayMode(display, &mode) != 0)
+        const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
+        if (!mode || mode->refresh_rate <= 0)
             return eb::FramePacer::frame_rate;
-        return eb::FramePacer::rate_for_refresh(mode.refresh_rate, settings_.variable_refresh);
+        return eb::FramePacer::rate_for_refresh(int(std::lround(mode->refresh_rate)), settings_.variable_refresh);
     }
     double presentation_rate() const {
         double rate = settings_.frame_limit;
         if (settings_.variable_refresh && vsync_requested_) {
-            SDL_DisplayMode mode{};
-            const int display = SDL_GetWindowDisplayIndex(window_);
-            if (display >= 0 && SDL_GetCurrentDisplayMode(display, &mode) == 0 && mode.refresh_rate > 0)
-                rate = rate > 0 ? std::min(rate, mode.refresh_rate * .99) : mode.refresh_rate * .99;
+            const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
+            if (mode && mode->refresh_rate > 0)
+                rate = rate > 0 ? std::min(rate, mode->refresh_rate * .99) : mode->refresh_rate * .99;
         }
         return rate;
     }
@@ -57,7 +59,7 @@ struct DesktopDisplay::Impl {
         if (wanted == requested_swap_interval_)
             return;
         requested_swap_interval_ = wanted;
-        if (SDL_GL_SetSwapInterval(wanted) != 0)
+        if (!SDL_GL_SetSwapInterval(wanted))
             std::cerr << (wanted ? "Vsync unavailable; using the frame clock: "
                                  : "Immediate presentation unavailable; the driver may limit FPS: ")
                       << SDL_GetError() << '\n';
@@ -68,8 +70,10 @@ struct DesktopDisplay::Impl {
         : vsync_requested_(options.vsync), settings_(settings),
           controller_preferences_(options.config.empty() ? "" : options.config + ".controllers"),
           controller_settings_(load_controller_settings(controller_preferences_)) {
+#ifndef SDL_PLATFORM_IOS // there SDL_main has started SDL
         SDL_SetMainReady();
-        if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0)
+#endif
+        if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
             throw std::runtime_error(std::string("SDL_Init: ") + SDL_GetError());
         initialized_ = true;
 #ifdef __linux__
@@ -83,15 +87,17 @@ struct DesktopDisplay::Impl {
             previous_nice_ = old_nice;
 #endif
         try {
-            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+            // Port/eame: OpenGL ES 3.0 (iOS's), running the ES 2.0 calls of gl_es.hpp.
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
             SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
             SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
             SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
             const auto initial_width = settings.render_width(width * options.scale, height * options.scale);
             int window_width = initial_width * options.scale, window_height = height * options.scale;
             SDL_Rect available{};
-            if (settings.widescreen && SDL_GetDisplayUsableBounds(0, &available) == 0) {
+            if (settings.widescreen && SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &available)) {
                 // A large aspect setting should still open within the desktop.
                 // This changes host window size, not the virtual game viewport.
                 const double fit = std::min({1.0, double(std::max(256, available.w - 48)) / window_width,
@@ -99,17 +105,15 @@ struct DesktopDisplay::Impl {
                 window_width = int(window_width * fit);
                 window_height = int(window_height * fit);
             }
-            window_ = SDL_CreateWindow("Phase Distorter", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                       window_width, window_height,
-                                       SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+            window_ = SDL_CreateWindow("Phase Distorter", window_width, window_height,
+                                       SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
             if (!window_)
                 throw std::runtime_error(std::string("SDL_CreateWindow: ") + SDL_GetError());
             eb::set_app_icon(window_);
             context_ = SDL_GL_CreateContext(window_);
             if (!context_)
                 throw std::runtime_error(std::string("SDL_GL_CreateContext: ") + SDL_GetError());
-            if (options.start_fullscreen &&
-                SDL_SetWindowFullscreen(window_, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0)
+            if (options.start_fullscreen && !SDL_SetWindowFullscreen(window_, true))
                 std::cerr << "Fullscreen unavailable: " << SDL_GetError() << '\n';
             update_swap_interval();
             presenter_ = std::make_unique<eb::FramePresenter>();
@@ -138,13 +142,11 @@ struct DesktopDisplay::Impl {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 importer.process_event(event);
-                if (event.type == SDL_DROPFILE)
-                    SDL_free(event.drop.file);
             }
             if (importer.exit_requested())
                 return {};
             int dw{}, dh{};
-            SDL_GL_GetDrawableSize(window_, &dw, &dh);
+            SDL_GetWindowSizeInPixels(window_, &dw, &dh);
             glViewport(0, 0, dw, dh);
             glDisable(GL_SCISSOR_TEST);
             glClearColor(0.035f, 0.043f, 0.065f, 1.f);
@@ -185,7 +187,7 @@ struct DesktopDisplay::Impl {
         refresh_asset_cache();
     }
 
-    bool fullscreen() const { return (SDL_GetWindowFlags(window_) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0; }
+    bool fullscreen() const { return (SDL_GetWindowFlags(window_) & SDL_WINDOW_FULLSCREEN) != 0; }
 
     std::optional<eb::GameVersion> take_game_request() { return std::exchange(next_game_, std::nullopt); }
     std::optional<eb::SaveStateSnapshotRequest> take_snapshot_action() {
@@ -211,7 +213,7 @@ struct DesktopDisplay::Impl {
 
     unsigned render_width() const {
         int drawable_width{}, drawable_height{};
-        SDL_GL_GetDrawableSize(window_, &drawable_width, &drawable_height);
+        SDL_GetWindowSizeInPixels(window_, &drawable_width, &drawable_height);
         return settings_.render_width(drawable_width,
                                       std::max(1, drawable_height - menu_height_pixels(drawable_height)));
     }
@@ -224,19 +226,17 @@ struct DesktopDisplay::Impl {
             const bool consumed = panel_ && panel_->process_event(event);
             if (panel_ && !was_visible && panel_->visible())
                 refresh_asset_cache();
-            if (event.type == SDL_DROPFILE) {
-                SDL_free(event.drop.file);
+            if (event.type == SDL_EVENT_DROP_FILE)
                 continue;
-            }
             // Fullscreen is a global host shortcut even while the panel captures
             // gameplay keys, so handle it before honoring the consumed flag.
-            if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F11 && !event.key.repeat) {
+            if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F11 && !event.key.repeat) {
                 toggle_fullscreen();
                 continue;
             }
             if (consumed)
                 continue;
-            if (event.type == SDL_QUIT || (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE))
+            if (event.type == SDL_EVENT_QUIT || (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE))
                 return false;
             input_->process_device_event(event);
         }
@@ -251,7 +251,7 @@ struct DesktopDisplay::Impl {
     void present(const SessionDiagnostics &session, PresentationPicture picture,
                  const std::string &capture = {}) {
         int drawable_width = 0, drawable_height = 0;
-        SDL_GL_GetDrawableSize(window_, &drawable_width, &drawable_height);
+        SDL_GetWindowSizeInPixels(window_, &drawable_width, &drawable_height);
         const int top_inset = menu_height_pixels(drawable_height);
         const double aspect = picture.fixed_aspect > 0
             ? picture.fixed_aspect
@@ -333,7 +333,7 @@ struct DesktopDisplay::Impl {
     }
 
     void toggle_fullscreen() {
-        if (SDL_SetWindowFullscreen(window_, fullscreen() ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
+        if (!SDL_SetWindowFullscreen(window_, !fullscreen())) {
             const std::string error = std::string("Fullscreen unavailable: ") + SDL_GetError();
             std::cerr << error << '\n';
             if (panel_)
@@ -399,7 +399,7 @@ struct DesktopDisplay::Impl {
         panel_.reset();
         presenter_.reset();
         if (context_)
-            SDL_GL_DeleteContext(context_);
+            SDL_GL_DestroyContext(context_);
         if (window_)
             SDL_DestroyWindow(window_);
         if (initialized_)

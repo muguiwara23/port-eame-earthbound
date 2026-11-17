@@ -1,7 +1,7 @@
 #include "eb/audio_output.hpp"
 #include "eb/frame_pacer.hpp"
 #include "eb/snes_audio_dsp.hpp"
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <cmath>
 #include <stdexcept>
 
@@ -70,57 +70,65 @@ void WaveFileWriter::header() {
     little32(bytes_);
 }
 
+// Port/eame: SDL3 plays through an audio stream. Its callback asks for bytes
+// and is given them from the same queue SDL2's device callback consumed;
+// the stream converts this source rate to the device's, as SDL2 did.
 DeviceAudioQueue::DeviceAudioQueue(double frame_rate) {
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
         throw std::runtime_error(std::string("SDL audio initialization: ") + SDL_GetError());
-    SDL_AudioSpec desired{}, obtained{};
+    SDL_AudioSpec desired{};
     // SDL converts this source rate to the physical device rate. The DSP
     // and WAV remain native; only playback follows the selected host cadence.
     desired.freq =
         int(std::lround(eb::SnesAudioDsp::output_sample_rate * frame_rate / eb::FramePacer::frame_rate));
-    desired.format = AUDIO_S16SYS;
+    desired.format = SDL_AUDIO_S16;
     desired.channels = 2;
-    desired.samples = 1024;
-    desired.callback = consume;
-    desired.userdata = this;
+    // SDL2's 1024-sample device buffer.
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "1024");
     // Keep the DSP's sample format; SDL resamples to the hardware device.
     // Playback remains a consumer and never controls the simulation.
-    device_ = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
-    if (!device_) {
+    stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired, consume, this);
+    if (!stream_) {
         const std::string error = SDL_GetError();
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
         throw std::runtime_error("SDL audio device: " + error + " (use --no-audio to disable playback)");
     }
-    SDL_PauseAudioDevice(device_, 0);
+    SDL_ResumeAudioStreamDevice(stream_);
 }
 
 DeviceAudioQueue::~DeviceAudioQueue() {
-    SDL_CloseAudioDevice(device_);
+    SDL_DestroyAudioStream(stream_);
     SDL_QuitSubSystem(SDL_INIT_AUDIO);
 }
 
 void DeviceAudioQueue::append(std::span<const std::int16_t> samples) {
     if (samples.empty())
         return;
-    SDL_LockAudioDevice(device_);
+    SDL_LockAudioStream(stream_);
     try {
         buffer_.append(samples);
     } catch (...) {
-        SDL_UnlockAudioDevice(device_);
+        SDL_UnlockAudioStream(stream_);
         throw;
     }
-    SDL_UnlockAudioDevice(device_);
+    SDL_UnlockAudioStream(stream_);
 }
 
 void DeviceAudioQueue::clear() {
-    SDL_LockAudioDevice(device_);
+    SDL_LockAudioStream(stream_);
     buffer_.clear();
-    SDL_UnlockAudioDevice(device_);
+    SDL_UnlockAudioStream(stream_);
 }
 
-void DeviceAudioQueue::consume(void* context, std::uint8_t* stream, int bytes) {
+// Runs on SDL's audio thread with the stream locked, so the queue is not
+// changed under it by append() or clear().
+void DeviceAudioQueue::consume(void* context, SDL_AudioStream* stream, int additional, int) {
     auto& self = *static_cast<DeviceAudioQueue*>(context);
-    self.buffer_.consume({reinterpret_cast<std::int16_t*>(stream), std::size_t(bytes) / sizeof(std::int16_t)});
+    if (additional <= 0)
+        return;
+    self.scratch_.resize(std::size_t(additional) / sizeof(std::int16_t));
+    self.buffer_.consume({self.scratch_.data(), self.scratch_.size()});
+    SDL_PutAudioStreamData(stream, self.scratch_.data(), int(self.scratch_.size() * sizeof(std::int16_t)));
 }
 
 } // namespace eb

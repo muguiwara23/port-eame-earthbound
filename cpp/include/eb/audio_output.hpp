@@ -5,6 +5,9 @@
 #include <fstream>
 #include <span>
 #include <string>
+#include <vector>
+
+struct SDL_AudioStream;
 
 namespace eb {
 // Streams native 32 kHz stereo samples and fixes RIFF lengths on finish.
@@ -44,8 +47,9 @@ class DeviceAudioQueue {
     void clear();
 
   private:
-    std::uint32_t device_{};
+    SDL_AudioStream* stream_{};
+    std::vector<std::int16_t> scratch_;
     AudioPlaybackBuffer buffer_;
-    static void consume(void* context, std::uint8_t* stream, int bytes);
+    static void consume(void* context, SDL_AudioStream* stream, int additional, int total);
 };
 } // namespace eb

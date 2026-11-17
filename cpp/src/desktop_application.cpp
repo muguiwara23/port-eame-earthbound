@@ -13,7 +13,10 @@
 #include "eb/snapshot_store.hpp"
 #include "generated_assets.hpp"
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
+// Port/eame: on iOS SDL3 starts the UIKit application (with its scene) and
+// calls main inside it; elsewhere SDL_MAIN_HANDLED keeps main as it is.
+#include <SDL3/SDL_main.h>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -33,13 +36,25 @@ constexpr int height = DisplaySettings::native_height;
 // requested game switch, so settings may persist while machine state cannot.
 int run_session(LaunchOptions options, std::optional<PendingGameSwitch> &next) {
     try {
+#ifndef SDL_PLATFORM_IOS
         SDL_SetMainReady();
+#endif
+#ifdef SDL_PLATFORM_IOS
+        // Port/eame: the app's Documents folder, which the Files app shows,
+        // holds the settings, the imported asset packs and the saves.
+        const char *documents = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+        if (!documents)
+            throw std::runtime_error(std::string("Cannot find the Documents folder: ") + SDL_GetError());
+        const std::string preferences = std::string(documents) +
+            (std::string(documents).ends_with("/") ? "" : "/");
+#else
         char *directory = SDL_GetPrefPath("ebsrc", "EarthBoundCpp");
         if (!directory)
             throw std::runtime_error(std::string("Cannot find application data directory: ") +
                                      SDL_GetError());
         const std::string preferences(directory);
         SDL_free(directory);
+#endif
         // Desktop runs remember preferences by default; deterministic headless
         // runs only read/write them when an explicit config path was supplied.
         if (!options.headless && !options.no_config && options.config.empty())

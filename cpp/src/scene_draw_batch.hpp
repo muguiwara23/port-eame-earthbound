@@ -1,8 +1,7 @@
 #pragma once
 
 #include "eb/direct_scene.hpp"
-#include <SDL.h>
-#include <SDL_opengl.h>
+#include "gl_es.hpp"
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -12,22 +11,20 @@ namespace eb {
 // Consecutive primitives may share one submission, but their order and triangle
 // diagonals must stay identical to the individual source triangle strips.
 // Flush before changing any shader, stencil or scissor state.
+// Port/eame: the vertices go to the current program's Position and TexCoord
+// attributes (gl_es.hpp) from client arrays, as OpenGL ES allows.
 class SceneDrawBatch {
 public:
     explicit SceneDrawBatch(std::vector<float>& vertices) : vertices_(vertices) {
-        const auto bind_buffer = reinterpret_cast<PFNGLBINDBUFFERPROC>(SDL_GL_GetProcAddress("glBindBuffer"));
-        const auto client_texture = reinterpret_cast<PFNGLCLIENTACTIVETEXTUREARBPROC>(SDL_GL_GetProcAddress("glClientActiveTexture"));
-        if (!bind_buffer || !client_texture)
-            throw std::runtime_error("Scene batching requires OpenGL 2.1 client arrays");
         vertices_.clear();
-        glPushClientAttrib(GL_CLIENT_VERTEX_ARRAY_BIT);
-        bind_buffer(GL_ARRAY_BUFFER, 0);
-        client_texture(GL_TEXTURE0);
-        glEnableClientState(GL_VERTEX_ARRAY);
-        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-        glDisableClientState(GL_COLOR_ARRAY);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glEnableVertexAttribArray(gles::position_attribute);
+        glEnableVertexAttribArray(gles::texcoord_attribute);
     }
-    ~SceneDrawBatch() { glPopClientAttrib(); }
+    ~SceneDrawBatch() {
+        glDisableVertexAttribArray(gles::position_attribute);
+        glDisableVertexAttribArray(gles::texcoord_attribute);
+    }
     SceneDrawBatch(const SceneDrawBatch&) = delete;
     SceneDrawBatch& operator=(const SceneDrawBatch&) = delete;
 
@@ -48,8 +45,8 @@ public:
     }
     void flush() {
         if (vertices_.empty()) return;
-        glVertexPointer(3, GL_FLOAT, 5 * sizeof(float), vertices_.data());
-        glTexCoordPointer(2, GL_FLOAT, 5 * sizeof(float), vertices_.data() + 3);
+        glVertexAttribPointer(gles::position_attribute, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), vertices_.data());
+        glVertexAttribPointer(gles::texcoord_attribute, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), vertices_.data() + 3);
         glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertices_.size() / 5));
         vertices_.clear();
     }

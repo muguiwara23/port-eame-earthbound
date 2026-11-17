@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include "eb/controller_settings.hpp"
 #include "eb/game_debug.hpp"
 #include "eb/snapshot_types.hpp"

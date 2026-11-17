@@ -41,7 +41,7 @@ ControllerSettings load_controller_settings(const std::string &path) {
         if (key == "stick_deadzone") {
             if (value >= 0 && value <= 32766)
                 settings.stick_deadzone = value;
-        } else if (value >= -1 && value < SDL_CONTROLLER_BUTTON_MAX) {
+        } else if (value >= -1 && value < SDL_GAMEPAD_BUTTON_COUNT) {
             for (std::size_t index = 0; index < snes_button_names.size(); ++index) {
                 if (key == "binding_" + std::string(snes_button_names[index])) {
                     settings.bindings[index] = value;

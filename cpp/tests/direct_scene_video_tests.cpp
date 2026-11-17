@@ -4,8 +4,9 @@
 #include "eb/frame_presenter.hpp"
 #include "eb/native/sprite_actors.hpp"
 #include "native_sprite_fixture.hpp"
-#include <SDL.h>
-#include <SDL_opengl.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
+#include "../src/gl_es.hpp"
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
@@ -117,15 +118,16 @@ void compare_effect(eb::FramePresenter& presenter, const eb::DirectScenePicture&
 } // namespace
 int main() {
     SDL_SetMainReady();
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
         std::cerr << SDL_GetError() << '\n';
         return 1;
     }
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-    SDL_Window *window = SDL_CreateWindow("Direct scene verification", 0, 0, 1280, 1120,
+    SDL_Window *window = SDL_CreateWindow("Direct scene verification", 1280, 1120,
                                           SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
     SDL_GLContext context = window ? SDL_GL_CreateContext(window) : nullptr;
     int result = 0;
@@ -454,7 +456,7 @@ int main() {
         // Effects own their depth/stencil attachments. The default framebuffer
         // may contain only color, without forcing a software/native-size path.
         SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
-        SDL_Window* color_window = SDL_CreateWindow("Color-only effect context", 0, 0, 256, 224,
+        SDL_Window* color_window = SDL_CreateWindow("Color-only effect context", 256, 224,
                                                    SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
         SDL_GLContext color_context = color_window ? SDL_GL_CreateContext(color_window) : nullptr;
         try {
@@ -465,11 +467,11 @@ int main() {
             auto effect = effect_scene(256, 80); effect->effects->brightness = 15;
             compare_effect(color_present, {effect, {}}, 1, 400);
         } catch (...) {
-            if (color_context) SDL_GL_DeleteContext(color_context);
+            if (color_context) SDL_GL_DestroyContext(color_context);
             if (color_window) SDL_DestroyWindow(color_window);
             SDL_GL_MakeCurrent(window, context); throw;
         }
-        SDL_GL_DeleteContext(color_context); SDL_DestroyWindow(color_window);
+        SDL_GL_DestroyContext(color_context); SDL_DestroyWindow(color_window);
         SDL_GL_MakeCurrent(window, context);
         std::cout << "Color-only default framebuffer GPU effects passed\n";
         std::cout << "Direct GL fractional motion, occlusion, fallback and flat CRT passed\n";
@@ -478,7 +480,7 @@ int main() {
         result = 1;
     }
     if (context)
-        SDL_GL_DeleteContext(context);
+        SDL_GL_DestroyContext(context);
     if (window)
         SDL_DestroyWindow(window);
     SDL_Quit();

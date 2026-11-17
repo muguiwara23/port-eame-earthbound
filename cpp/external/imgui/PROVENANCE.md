@@ -5,6 +5,8 @@ Unmodified standalone Dear ImGui v1.91.9b, upstream commit
 https://github.com/ocornut/imgui/tree/f5befd2d29e66809cd1110a152e375a7f1981f06
 
 Only the core library and SDL2/OpenGL2 platform/render backends are included.
+Port/eame adds the same commit's unmodified SDL3 and OpenGL3 backends
+(imgui_impl_sdl3, imgui_impl_opengl3, imgui_impl_opengl3_loader.h) for iOS.
 No demo, game code, engine code, or libultraship code is included. The MIT
 license is reproduced in LICENSE.txt. SHA256SUMS records the upstream bytes.
 

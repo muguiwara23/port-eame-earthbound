@@ -57,6 +57,9 @@ private:
     int source_width_ = width, source_height_ = height;
     bool direct_scene_ = false;
     unsigned texture_{};
+    // Port/eame: the program standing in for the fixed-function quad (gl_es.hpp).
+    unsigned plain_program_{};
+    int plain_alpha_test_{-1};
     unsigned scene_texture_{};
     unsigned scene_texture_width_{}, scene_texture_height_{};
     std::shared_ptr<const DirectSceneFrame> uploaded_scene_;

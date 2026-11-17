@@ -6,8 +6,8 @@
 // Neither receives a bus, CPU, or mutable game-memory reference.
 
 #include "imgui.h"
-#include "backends/imgui_impl_opengl2.h"
-#include "backends/imgui_impl_sdl2.h"
+#include "backends/imgui_impl_opengl3.h"
+#include "backends/imgui_impl_sdl3.h"
 
 #include <algorithm>
 #include <array>
@@ -57,14 +57,14 @@ DebugPanel::DebugPanel(SDL_Window* window, SDL_GLContext context): impl_(std::ma
     style.Colors[ImGuiCol_WindowBg] = ImVec4(0.075f, 0.085f, 0.11f, 0.98f);
     style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.12f, 0.19f, 0.27f, 1.0f);
     style.Colors[ImGuiCol_CheckMark] = ImVec4(0.35f, 0.75f, 0.95f, 1.0f);
-    if (!ImGui_ImplSDL2_InitForOpenGL(window, context)) {
+    if (!ImGui_ImplSDL3_InitForOpenGL(window, context)) {
         ImGui::DestroyContext(impl_->context);
         throw std::runtime_error("Could not initialize the debug panel SDL backend");
     }
-    if (!ImGui_ImplOpenGL2_Init()) {
+    if (!ImGui_ImplOpenGL3_Init()) {
         // Construction is not complete yet, so unwind the already-live backend
         // here rather than relying on the object's destructor to be called.
-        ImGui_ImplSDL2_Shutdown();
+        ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext(impl_->context);
         throw std::runtime_error("Could not initialize the debug panel OpenGL backend");
     }
@@ -73,22 +73,22 @@ DebugPanel::DebugPanel(SDL_Window* window, SDL_GLContext context): impl_(std::ma
 DebugPanel::~DebugPanel() {
     // Backends release GL/SDL resources while their host context still exists.
     ImGui::SetCurrentContext(impl_->context);
-    ImGui_ImplOpenGL2_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext(impl_->context);
 }
 
 bool DebugPanel::process_event(const SDL_Event& event) {
     ImGui::SetCurrentContext(impl_->context);
-    ImGui_ImplSDL2_ProcessEvent(&event);
+    ImGui_ImplSDL3_ProcessEvent(&event);
     // Use key transitions, not repeat events, for toggle actions. Consuming F1
     // on both down/up also keeps it from leaking into any gameplay handler.
-    if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F1) {
+    if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) {
         if (!event.key.repeat && !impl_->confirmation) set_visible(!visible());
         return true;
     }
-    if (event.type == SDL_KEYUP && event.key.keysym.sym == SDLK_F1) return true;
-    if (visible() && event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
+    if (event.type == SDL_EVENT_KEY_UP && event.key.key == SDLK_F1) return true;
+    if (visible() && event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) {
         if (!event.key.repeat) {
             if (impl_->confirmation) impl_->cancel_confirmation = true;
             else if (!impl_->delete_snapshot.empty()) impl_->delete_snapshot.clear();
@@ -98,21 +98,21 @@ bool DebugPanel::process_event(const SDL_Event& event) {
     }
     // Merely hovering over the persistent bar must not pause game controls.
     // Its mouse interaction is captured, while F1 remains the keyboard entry.
-    if (event.type == SDL_MOUSEBUTTONDOWN && event.button.y >= 0 && event.button.y < impl_->menu_height)
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.y >= 0 && event.button.y < impl_->menu_height)
         impl_->bar_mouse_down = true;
-    if (event.type == SDL_MOUSEBUTTONUP) {
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
         const bool owned = impl_->bar_mouse_down || event.button.y < impl_->menu_height;
         impl_->bar_mouse_down = false;
         if (owned) return true;
     }
-    if (event.type == SDL_MOUSEMOTION && event.motion.y < impl_->menu_height) return true;
+    if (event.type == SDL_EVENT_MOUSE_MOTION && event.motion.y < impl_->menu_height) return true;
     if (!captures_game_input()) return false;
     // Capture physical gameplay input for the entire visible panel, including
     // when the mouse is outside it. The simulation itself continues to advance.
     switch (event.type) {
-    case SDL_KEYDOWN: case SDL_KEYUP: case SDL_TEXTINPUT: case SDL_TEXTEDITING:
-    case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: case SDL_MOUSEMOTION: case SDL_MOUSEWHEEL:
-    case SDL_CONTROLLERBUTTONDOWN: case SDL_CONTROLLERBUTTONUP: case SDL_CONTROLLERAXISMOTION:
+    case SDL_EVENT_KEY_DOWN: case SDL_EVENT_KEY_UP: case SDL_EVENT_TEXT_INPUT: case SDL_EVENT_TEXT_EDITING:
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP: case SDL_EVENT_MOUSE_MOTION: case SDL_EVENT_MOUSE_WHEEL:
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP: case SDL_EVENT_GAMEPAD_AXIS_MOTION:
         return true;
     default:
         return false;
@@ -139,7 +139,7 @@ void DebugPanel::set_game_settings(GameDebugSettings settings) {
 const ControllerSettings& DebugPanel::controller_settings() const { return impl_->controller_settings; }
 void DebugPanel::set_controller_settings(ControllerSettings settings) {
     for (auto& button : settings.bindings)
-        if (button < -1 || button >= SDL_CONTROLLER_BUTTON_MAX) button = -1;
+        if (button < -1 || button >= SDL_GAMEPAD_BUTTON_COUNT) button = -1;
     settings.stick_deadzone = std::clamp(settings.stick_deadzone, 0, 32766);
     impl_->controller_settings = settings;
 }
@@ -150,8 +150,8 @@ std::optional<SaveStateSnapshotRequest> DebugPanel::take_snapshot_action() {
 
 void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnostics) {
     ImGui::SetCurrentContext(impl_->context);
-    ImGui_ImplOpenGL2_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     const auto mouse=ImGui::GetIO().MousePos;
     const bool bar_visible=!diagnostics.fullscreen || (mouse.x>=0 && mouse.x<ImGui::GetIO().DisplaySize.x &&
@@ -454,7 +454,7 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                         ImGui::TextUnformatted("Controller disconnected");
                     std::string held;
                     if (controller.connected) {
-                        for (int button = 0; button < SDL_CONTROLLER_BUTTON_MAX; ++button) {
+                        for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; ++button) {
                             if (!controller.pressed[button]) continue;
                             if (!held.empty()) held += ", ";
                             held += controller_button_name(button, controller.nintendo_layout);
@@ -486,7 +486,7 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                             auto& binding = impl_->controller_settings.bindings[index];
                             ImGui::SetNextItemWidth(-1);
                             if (ImGui::BeginCombo("##Controller source", controller_button_name(binding, controller.nintendo_layout))) {
-                                for (int button = -1; button < SDL_CONTROLLER_BUTTON_MAX; ++button) {
+                                for (int button = -1; button < SDL_GAMEPAD_BUTTON_COUNT; ++button) {
                                     const bool selected = binding == button;
                                     if (ImGui::Selectable(controller_button_name(button, controller.nintendo_layout), selected)) binding = button;
                                     if (selected) ImGui::SetItemDefaultFocus();
@@ -494,7 +494,7 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
                                 ImGui::EndCombo();
                             }
                             ImGui::TableSetColumnIndex(2);
-                            if (controller.connected && binding >= 0 && binding < SDL_CONTROLLER_BUTTON_MAX && controller.pressed[binding])
+                            if (controller.connected && binding >= 0 && binding < SDL_GAMEPAD_BUTTON_COUNT && controller.pressed[binding])
                                 ImGui::TextColored(ImVec4(0.35f, 0.95f, 0.55f, 1), "Pressed");
                             else ImGui::TextDisabled("-");
                             ImGui::PopID();
@@ -549,7 +549,7 @@ void DebugPanel::draw(DisplaySettings& settings, const DebugDiagnostics& diagnos
     if (!impl_->visible) impl_->delete_snapshot.clear();
     ImGui::Render();
     // main draws the completed game image first and swaps only after this call.
-    ImGui_ImplOpenGL2_RenderDrawData(ImGui::GetDrawData());
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
 namespace {
@@ -638,12 +638,12 @@ AssetImportPanel::AssetImportPanel(SDL_Window* window, SDL_GLContext context): i
     style.FrameRounding = 4.0f;
     style.WindowPadding = ImVec2(20.0f, 20.0f);
     style.ItemSpacing = ImVec2(10.0f, 12.0f);
-    if (!ImGui_ImplSDL2_InitForOpenGL(window, context)) {
+    if (!ImGui_ImplSDL3_InitForOpenGL(window, context)) {
         ImGui::DestroyContext(impl_->context);
         throw std::runtime_error("Could not initialize the import screen SDL backend");
     }
-    if (!ImGui_ImplOpenGL2_Init()) {
-        ImGui_ImplSDL2_Shutdown();
+    if (!ImGui_ImplOpenGL3_Init()) {
+        ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext(impl_->context);
         throw std::runtime_error("Could not initialize the import screen OpenGL backend");
     }
@@ -658,28 +658,28 @@ AssetImportPanel::AssetImportPanel(SDL_Window* window, SDL_GLContext context): i
 
 AssetImportPanel::~AssetImportPanel() {
     ImGui::SetCurrentContext(impl_->context);
-    ImGui_ImplOpenGL2_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext(impl_->context);
 }
 
 void AssetImportPanel::process_event(const SDL_Event& event) {
     ImGui::SetCurrentContext(impl_->context);
-    ImGui_ImplSDL2_ProcessEvent(&event);
-    if (event.type == SDL_QUIT) impl_->exit = true;
-    if (event.type == SDL_KEYDOWN && !event.key.repeat && event.key.keysym.sym == SDLK_ESCAPE) {
+    ImGui_ImplSDL3_ProcessEvent(&event);
+    if (event.type == SDL_EVENT_QUIT) impl_->exit = true;
+    if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_ESCAPE) {
         // Escape backs out of the browser before it exits first-run setup.
         if (impl_->browser_open) impl_->browser_open = false;
         else impl_->exit = true;
     }
     // Copy the drop path now; main owns and frees SDL's allocated event payload.
-    if (event.type == SDL_DROPFILE && event.drop.file) impl_->choose(event.drop.file);
+    if (event.type == SDL_EVENT_DROP_FILE && event.drop.data) impl_->choose(event.drop.data);
 }
 
 void AssetImportPanel::draw() {
     ImGui::SetCurrentContext(impl_->context);
-    ImGui_ImplOpenGL2_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     const auto size = ImGui::GetIO().DisplaySize;
     ImGui::SetNextWindowPos(ImVec2(size.x * 0.5f, size.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -764,7 +764,7 @@ void AssetImportPanel::draw() {
         ImGui::EndPopup();
     }
     ImGui::Render();
-    ImGui_ImplOpenGL2_RenderDrawData(ImGui::GetDrawData());
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
 // Transfer each request exactly once; validation failures can safely return to

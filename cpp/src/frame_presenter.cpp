@@ -4,7 +4,7 @@
 // This layer draws completed pictures or immutable source scenes. It never
 // advances the game or changes the hardware framebuffer.
 
-#include <SDL_opengl.h>
+#include "gl_es.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,6 +21,8 @@ void FrameImage::write_ppm(const std::string& path) const {
 }
 
 FramePresenter::FramePresenter() {
+    plain_program_ = gles::program(gles::plain_fragment, "Picture");
+    plain_alpha_test_ = glGetUniformLocation(plain_program_, "AlphaTest");
     glGenTextures(1, &texture_);
     glBindTexture(GL_TEXTURE_2D, texture_);
     // Preserve pixel edges; texture filtering must not blend neighboring tiles.
@@ -31,11 +33,16 @@ FramePresenter::FramePresenter() {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     if (glGetError() != GL_NO_ERROR) {
         glDeleteTextures(1, &texture_);
+        glDeleteProgram(plain_program_);
         throw std::runtime_error("OpenGL framebuffer texture creation failed");
     }
 }
 
-FramePresenter::~FramePresenter() { glDeleteTextures(1, &texture_); if (scene_texture_) glDeleteTextures(1, &scene_texture_); }
+FramePresenter::~FramePresenter() {
+    glDeleteTextures(1, &texture_);
+    if (scene_texture_) glDeleteTextures(1, &scene_texture_);
+    if (plain_program_) glDeleteProgram(plain_program_);
+}
 
 void FramePresenter::draw(std::span<const std::uint32_t, width * height> pixels,
                           int drawable_width, int drawable_height) {
@@ -79,13 +86,11 @@ void FramePresenter::draw(std::span<const std::uint32_t> pixels, int source_widt
         texture_height_ = source_height;
     }
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, source_width, source_height, GL_RGBA, GL_UNSIGNED_BYTE, pixels_.data());
-    glBegin(GL_TRIANGLE_STRIP);
+    glUseProgram(plain_program_);
+    glUniform1i(plain_alpha_test_, 0);
     // Source row zero is the top of the picture, opposite GL's screen origin.
-    glTexCoord2f(0, 1); glVertex2f(-1, -1);
-    glTexCoord2f(1, 1); glVertex2f(1, -1);
-    glTexCoord2f(0, 0); glVertex2f(-1, 1);
-    glTexCoord2f(1, 0); glVertex2f(1, 1);
-    glEnd();
+    gles::quad(gles::uv_top_down);
+    glUseProgram(0);
     if (glGetError() != GL_NO_ERROR) throw std::runtime_error("OpenGL framebuffer presentation failed");
 }
 
@@ -105,24 +110,18 @@ bool FramePresenter::begin_draw(int drawable_width, int drawable_height, double 
     glDepthMask(GL_TRUE);
     glStencilMask(255);
     glDisable(GL_STENCIL_TEST);
-    glDisable(GL_ALPHA_TEST);
     glDisable(GL_CULL_FACE);
     glDisable(GL_BLEND);
     glDisable(GL_DITHER);
     glDisable(GL_SCISSOR_TEST);
-    glEnable(GL_TEXTURE_2D);
+    glActiveTexture(GL_TEXTURE0);
     glClearColor(0, 0, 0, 1);
-    glClearDepth(1);
+    glClearDepthf(1);
     glClearStencil(0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     // GL starts at the bottom: centering within game_height leaves the reserved
     // strip at the top, while the complete source texture remains in the quad.
     glViewport((drawable_width - view_width) / 2, (game_height - view_height) / 2, view_width, view_height);
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-    glColor4f(1, 1, 1, 1);
     return true;
 }
 
@@ -159,7 +158,7 @@ bool FramePresenter::draw_scene(const DirectScenePicture& picture, int drawable_
         }
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         if (scene_texture_width_ != scene.atlas_width || scene_texture_height_ != scene.atlas_height) {
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, scene.atlas_width, scene.atlas_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, scene.atlas_width, scene.atlas_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
             scene_texture_width_ = scene.atlas_width;
             scene_texture_height_ = scene.atlas_height;
         }
@@ -171,7 +170,9 @@ bool FramePresenter::draw_scene(const DirectScenePicture& picture, int drawable_
         scene_effects_->draw(picture, scene_texture_);
         return true;
     }
-    glEnable(GL_ALPHA_TEST); glAlphaFunc(GL_GREATER, 0);
+    // The alpha test (GL_GREATER 0) is the plain program's.
+    glUseProgram(plain_program_);
+    glUniform1i(plain_alpha_test_, 1);
     glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LESS);
     GLint viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
@@ -216,7 +217,8 @@ bool FramePresenter::draw_scene(const DirectScenePicture& picture, int drawable_
         batch.append(quad, offset, scene);
     }
     batch.flush();
-    glDisable(GL_SCISSOR_TEST); glDisable(GL_STENCIL_TEST); glDisable(GL_ALPHA_TEST); glDisable(GL_DEPTH_TEST);
+    glDisable(GL_SCISSOR_TEST); glDisable(GL_STENCIL_TEST); glDisable(GL_DEPTH_TEST);
+    glUseProgram(0);
     if (glGetError() != GL_NO_ERROR) throw std::runtime_error("OpenGL direct scene presentation failed");
     return true;
 }
@@ -264,10 +266,16 @@ FrameImage FramePresenter::capture() const {
     FrameImage image{drawable_width_, drawable_height_, {}};
     const std::size_t row_bytes = static_cast<std::size_t>(drawable_width_) * 3;
     image.rgb.resize(row_bytes * drawable_height_);
+    // OpenGL ES reads RGBA (GL_RGB is not guaranteed): read that, keep RGB.
+    std::vector<std::uint8_t> rgba(static_cast<std::size_t>(drawable_width_) * drawable_height_ * 4);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadBuffer(GL_BACK);
-    glReadPixels(0, 0, drawable_width_, drawable_height_, GL_RGB, GL_UNSIGNED_BYTE, image.rgb.data());
+    glReadPixels(0, 0, drawable_width_, drawable_height_, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
     if (glGetError() != GL_NO_ERROR) throw std::runtime_error("OpenGL screenshot readback failed");
+    for (std::size_t i = 0, n = rgba.size() / 4; i < n; ++i) {
+        image.rgb[3 * i] = rgba[4 * i];
+        image.rgb[3 * i + 1] = rgba[4 * i + 1];
+        image.rgb[3 * i + 2] = rgba[4 * i + 2];
+    }
     // Convert bottom-up GL readback to the top-down rows used by PPM and tests.
     for (int row = 0; row < drawable_height_ / 2; ++row) {
         auto top = image.rgb.begin() + row * row_bytes;
