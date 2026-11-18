@@ -1,0 +1,22 @@
+{
+  "porteame": 1,
+  "app": {
+    "name": "Phase Distorter",
+    "display_name": "EarthBound",
+    "executable": "PhaseDistorter",
+    "bundle_id": "org.porteame.earthbound",
+    "version": "0.5"
+  },
+  "ipa": "PhaseDistorter-{version}-ios-arm64-unsigned.ipa",
+  "licenses": {
+    "Phase-Distorter-LICENSE.txt": "LICENSE",
+    "Phase-Distorter-NOTICE.md": "NOTICE.md",
+    "SDL3.txt": "${PORTEAME_SDL3_SOURCE}/LICENSE.txt",
+    "Dear-ImGui.txt": "cpp/external/imgui/LICENSE.txt",
+    "snes_spc-LGPL-2.1.txt": "cpp/external/spc_dsp/LICENSE",
+    "crt-lottes-fast.md": "cpp/external/crt-lottes-fast/README.md",
+    "Port-eame-kit.txt": "port-eame-kit/LICENSE"
+  },
+  "forbidden": [".ebpak"],
+  "icon": "ios/private/app-icon.png.enc"
+}

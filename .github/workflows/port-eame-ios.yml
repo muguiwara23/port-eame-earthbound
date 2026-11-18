@@ -1,8 +1,9 @@
 name: Port/eame iOS
 
-# Port/eame: the unsigned iOS app (EarthBound / Mother 2). Run by hand only
-# (Actions > Port/eame iOS > Run workflow) so one build at a time has the
-# macOS runner. No ROM, asset pack, secret or signing identity is used.
+# Port/eame: the unsigned iOS app (EarthBound / Mother 2), built by the kit (port-eame-kit,
+# a git submodule). Run by hand only (Actions > Port/eame iOS > Run workflow),
+# so one build at a time has the macOS runner. No ROM, disc, save or signing
+# identity is used.
 on:
   workflow_dispatch:
     inputs:
@@ -32,35 +33,9 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
-      - name: Tools
-        run: |
-          command -v ninja || brew install ninja
-          cmake --version | head -1
-          ninja --version
-      - name: Build SDL3 for iOS, the game, and the unsigned IPA
-        env:
-          PORTEAME_VERSION: 0.5-ios-dev.${{ github.run_number }}
-          # Arturo's own icon, kept in the repository only encrypted; without
-          # the secret (or with the box unticked) the app has no icon.
-          PORTEAME_ICON_KEY: ${{ secrets.PORTEAME_ICON_KEY }}
-        run: |
-          if [ "${{ inputs.icon }}" != "false" ] && [ -n "$PORTEAME_ICON_KEY" ]; then
-            python3 ios/port_eame_private.py decrypt ios/private/app-icon.png.enc "$RUNNER_TEMP/app-icon.png" "$PORTEAME_ICON_KEY"
-            export PORTEAME_ICON="$RUNNER_TEMP/app-icon.png"
-          else
-            echo "No icon for this build"
-          fi
-          bash ios/build_ios.sh
-      - uses: actions/upload-artifact@v4
         with:
-          name: earthbound-ios-unsigned-ipa
-          path: |
-            build/ios/release/*.ipa
-            build/ios/release/*.ipa.sha256
-          if-no-files-found: error
-          retention-days: 30
-      - name: Build log on failure
-        if: failure()
-        run: |
-          ls -la build/ios || true
-          tail -n 200 build/ios/build/CMakeFiles/CMakeError.log 2>/dev/null || true
+          submodules: true
+      - uses: ./port-eame-kit/actions/ios
+        with:
+          icon: ${{ inputs.icon }}
+          icon-key: ${{ secrets.PORTEAME_ICON_KEY }}

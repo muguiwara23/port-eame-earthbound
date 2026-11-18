@@ -11,7 +11,9 @@
 #include "eb/launch_options.hpp"
 #include "eb/session_storage.hpp"
 #include "desktop_input.hpp"
-#include "touch_controls.hpp"
+#include "porteame/ios.h"
+#include "porteame/touch.h"
+#include "porteame/touch_gles2.h"
 #include "generated_assets.hpp"
 #include "gl_es.hpp"
 #include <SDL3/SDL.h>
@@ -128,7 +130,7 @@ struct DesktopDisplay::Impl {
             if (settings_.crt_filter) presenter_->prepare_crt();
             input_ = std::make_unique<DesktopInput>();
             input_->configure(controller_settings_);
-            touch_ = std::make_unique<TouchControls>();
+            touch_ = std::make_unique<TouchPad>();
             std::cout << "OpenGL: " << glGetString(GL_VERSION) << " / " << glGetString(GL_RENDERER) << '\n';
         } catch (...) {
             cleanup();
@@ -248,7 +250,7 @@ struct DesktopDisplay::Impl {
     bool events(std::uint16_t &buttons) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_WILL_ENTER_BACKGROUND || event.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
+            if (pe_ios_is_background(&event)) {
                 if (!wait_for_foreground())
                     return false;
                 continue;
@@ -273,7 +275,7 @@ struct DesktopDisplay::Impl {
                 return false;
             input_->process_device_event(event);
         }
-        if (touch_->take_menu() && panel_)
+        if (pe_touch_take_menu(touch_->touch) && panel_)
             panel_->set_visible(!panel_->visible());
         if (panel_ && panel_->take_close_request())
             return false; // the game loop ends: the save and settings are written
@@ -282,7 +284,7 @@ struct DesktopDisplay::Impl {
         if (panel_ && panel_->captures_game_input())
             return true;
         buttons |= input_->buttons();
-        buttons |= touch_->buttons();
+        buttons |= std::uint16_t(pe_touch_buttons(touch_->touch));
         return true;
     }
 
@@ -355,23 +357,57 @@ struct DesktopDisplay::Impl {
     void set_background_handler(std::function<void()> handler) { background_handler_ = std::move(handler); }
 
   private:
-    // Port/eame: the on-screen controller (touch_controls.hpp). Fingers come in
-    // window-relative (0-1) coordinates; the controls work in drawable pixels.
-    float pixel_density() const {
-        int w = 0, pw = 0;
-        SDL_GetWindowSize(window_, &w, nullptr);
-        SDL_GetWindowSizeInPixels(window_, &pw, nullptr);
-        return w > 0 ? float(pw) / float(w) : 1.f;
-    }
+    // Port/eame: the kit's on-screen SNES controller (port-eame-kit,
+    // porteame/touch.h), drawn with OpenGL ES over the frame. Fingers come in
+    // window-relative (0-1) coordinates; the controller works in drawable
+    // pixels.
+    //
+    // Its bits are JOY1's, as DesktopInput's keyboard map sets them (A 7, X 6,
+    // L 5, R 4, B 15, Y 14, Select 13, Start 12, the D-pad 11-8), with one
+    // change for thumbs: EarthBound's quick Talk/Check is the SNES L button and
+    // its A opens the command menu, while Y does nothing in the game. So the
+    // on-screen A sends L (talk or check at once; L also confirms in menus)
+    // and the on-screen Y sends A (the command menu). L itself still sends L.
+    struct TouchPad {
+        PeTouch *touch = pe_touch_create(PE_TOUCH_SNES);
+        PeTouchGL *gl = pe_touch_gl_create();
+        TouchPad() {
+            if (!touch || !gl) {
+                pe_touch_gl_destroy(gl);
+                pe_touch_destroy(touch);
+                throw std::runtime_error("Touch controls: out of memory");
+            }
+            constexpr std::uint32_t snes_a = 1u << 7, snes_l = 1u << 5;
+            pe_touch_map(touch, PE_TOUCH_UP, 1u << 11);
+            pe_touch_map(touch, PE_TOUCH_DOWN, 1u << 10);
+            pe_touch_map(touch, PE_TOUCH_LEFT, 1u << 9);
+            pe_touch_map(touch, PE_TOUCH_RIGHT, 1u << 8);
+            pe_touch_map(touch, PE_TOUCH_EAST, snes_l);   // A: talk or check
+            pe_touch_map(touch, PE_TOUCH_SOUTH, 1u << 15); // B
+            pe_touch_map(touch, PE_TOUCH_NORTH, 1u << 6);  // X
+            pe_touch_map(touch, PE_TOUCH_WEST, snes_a);   // Y: the command menu
+            pe_touch_map(touch, PE_TOUCH_L1, snes_l);
+            pe_touch_map(touch, PE_TOUCH_R1, 1u << 4);
+            pe_touch_map(touch, PE_TOUCH_SELECT, 1u << 13);
+            pe_touch_map(touch, PE_TOUCH_START, 1u << 12);
+        }
+        ~TouchPad() {
+            pe_touch_gl_destroy(gl); // with the GL context still current
+            pe_touch_destroy(touch);
+        }
+        TouchPad(const TouchPad &) = delete;
+        TouchPad &operator=(const TouchPad &) = delete;
+    };
     bool touch_event(const SDL_Event &event) {
         int dw = 0, dh = 0;
         SDL_GetWindowSizeInPixels(window_, &dw, &dh);
         switch (event.type) {
         case SDL_EVENT_FINGER_DOWN: case SDL_EVENT_FINGER_MOTION: case SDL_EVENT_FINGER_UP: case SDL_EVENT_FINGER_CANCELED: {
-            const auto kind = event.type == SDL_EVENT_FINGER_DOWN     ? TouchControls::FingerDown
-                              : event.type == SDL_EVENT_FINGER_MOTION ? TouchControls::FingerMove
-                                                                      : TouchControls::FingerUp;
-            touch_->finger(kind, std::uint64_t(event.tfinger.fingerID), event.tfinger.x * dw, event.tfinger.y * dh);
+            const PeFinger kind = event.type == SDL_EVENT_FINGER_DOWN     ? PE_FINGER_DOWN
+                                  : event.type == SDL_EVENT_FINGER_MOTION ? PE_FINGER_MOVE
+                                                                          : PE_FINGER_UP;
+            pe_touch_finger(touch_->touch, kind, std::uint64_t(event.tfinger.fingerID), event.tfinger.x * dw,
+                            event.tfinger.y * dh);
             return true; // the panel takes touches through the mouse events SDL makes of them
         }
         case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP: case SDL_EVENT_MOUSE_MOTION: {
@@ -379,72 +415,65 @@ struct DesktopDisplay::Impl {
             const bool button = event.type != SDL_EVENT_MOUSE_MOTION;
             if ((button ? event.button.which : event.motion.which) != SDL_TOUCH_MOUSEID)
                 return false;
-            const float density = pixel_density();
+            const float density = pe_ios_density(window_);
             const float x = (button ? event.button.x : event.motion.x) * density,
                         y = (button ? event.button.y : event.motion.y) * density;
             if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
-                touch_mouse_on_controls_ = touch_->covers(x, y);
+                touch_mouse_on_controls_ = pe_touch_covers(touch_->touch, x, y);
             const bool ours = touch_mouse_on_controls_;
             if (event.type == SDL_EVENT_MOUSE_BUTTON_UP)
                 touch_mouse_on_controls_ = false;
             return ours;
         }
         case SDL_EVENT_KEY_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-            touch_->other_input();
+            pe_touch_other_input(touch_->touch);
             return false;
         default:
             return false;
         }
     }
     void draw_touch_controls(int drawable_width, int drawable_height, double aspect, int top_inset) {
-        // Laid out every frame (it keeps its pictures while nothing moved), so
-        // the first touch already lands on the right places.
-        touch_->block(panel_ && panel_->visible());
+        // Laid out every frame (nothing changes while nothing moved), so the
+        // first touch already lands on the right places.
+        pe_touch_block(touch_->touch, panel_ && panel_->visible());
         // The picture's columns, as FramePresenter::begin_draw places it.
         const int game_height = drawable_height - std::clamp(top_inset, 0, std::max(0, drawable_height - 1));
         const double view_height = std::min(double(game_height), double(drawable_width) / aspect);
         const int view_width = std::min(drawable_width, int(std::lround(view_height * aspect)));
         const int picture_left = (drawable_width - view_width) / 2;
-        const float density = pixel_density();
-        int left = 0, right = 0, bottom = 0;
-        SDL_Rect safe{};
-        int ww = 0, wh = 0;
-        SDL_GetWindowSize(window_, &ww, &wh);
-        if (SDL_GetWindowSafeArea(window_, &safe) && ww > 0 && wh > 0) {
-            left = int(safe.x * density);
-            right = int((ww - safe.x - safe.w) * density);
-            bottom = int((wh - safe.y - safe.h) * density);
-        }
-        touch_->layout(drawable_width, drawable_height, picture_left, picture_left + view_width, density, left,
-                       std::max(0, right), std::max(0, bottom));
-        touch_->draw();
+        PeTouchLayout layout{};
+        layout.width = drawable_width;
+        layout.height = drawable_height;
+        layout.picture_left = picture_left;
+        layout.picture_right = picture_left + view_width;
+        layout.density = pe_ios_density(window_);
+        pe_ios_safe_area(window_, &layout.inset_left, &layout.inset_right, &layout.inset_bottom);
+        pe_touch_layout(touch_->touch, &layout);
+        if (!pe_touch_gl_draw(touch_->gl, touch_->touch))
+            gles::drain_errors("drawing the touch controls");
     }
     // Port/eame: iOS may not draw from the background (it refuses the GPU
-    // work), so the game and its drawing wait here, with the controls let
-    // go, until the app is back. False when the app is closed meanwhile.
+    // work), so the game and its drawing wait (pe_ios_wait_for_foreground),
+    // with the controls let go, until the app is back; the save and settings
+    // are written first. False when the app is closed meanwhile.
     bool wait_for_foreground() {
-        std::cout << "In the background: paused" << std::endl;
-        if (background_handler_) {
-            try {
-                background_handler_();
-            } catch (const std::exception &error) {
-                std::cerr << "Could not save before the background: " << error.what() << '\n';
-            }
+        pe_touch_block(touch_->touch, 1);
+        const bool back = pe_ios_wait_for_foreground(
+            [](void *self) { static_cast<Impl *>(self)->save_before_background(); }, this);
+        pe_touch_block(touch_->touch, 0);
+        return back;
+    }
+    void save_before_background() {
+        if (!background_handler_)
+            return;
+        try {
+            background_handler_();
+        } catch (const std::exception &error) {
+            std::cerr << "Could not save before the background: " << error.what() << '\n';
         }
-        touch_->block(true);
-        SDL_Event event;
-        while (SDL_WaitEvent(&event)) {
-            if (event.type == SDL_EVENT_DID_ENTER_FOREGROUND)
-                break;
-            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_TERMINATING)
-                return false;
-        }
-        touch_->block(false);
-        std::cout << "In the foreground: resumed" << std::endl;
-        return true;
     }
     std::function<void()> background_handler_;
-    std::unique_ptr<TouchControls> touch_;
+    std::unique_ptr<TouchPad> touch_;
     bool touch_mouse_on_controls_ = false;
 #ifdef __linux__
     std::optional<int> previous_nice_;

@@ -283,9 +283,17 @@ if(EB_BUILD_FRONTEND)
         src/session_storage.cpp src/audio_output.cpp src/snapshot_store.cpp)
     target_include_directories(eb_desktop_support PUBLIC include)
     target_link_libraries(eb_desktop_support PUBLIC eb_video)
-    add_library(eb_desktop STATIC src/desktop_display.cpp src/desktop_input.cpp src/touch_controls.cpp)
+    # Port/eame: the kit (the port-eame-kit submodule): the iOS startup and
+    # ending, the background pause and the on-screen controller.
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../port-eame-kit" "${CMAKE_CURRENT_BINARY_DIR}/port-eame-kit")
+    if(EB_GLES_INCLUDE_DIR)
+        target_include_directories(porteame_kit PRIVATE "${EB_GLES_INCLUDE_DIR}")
+        target_compile_definitions(porteame_kit PRIVATE SDL_USE_BUILTIN_OPENGL_DEFINITIONS)
+    endif()
+    add_library(eb_desktop STATIC src/desktop_display.cpp src/desktop_input.cpp)
     target_include_directories(eb_desktop PUBLIC include)
-    target_link_libraries(eb_desktop PUBLIC eb_desktop_support eb_debug_panel eb_assets eb_asset_cache eb_core)
+    target_link_libraries(eb_desktop PUBLIC eb_desktop_support eb_debug_panel eb_assets eb_asset_cache eb_core
+                          porteame::kit)
     add_executable(eb_cpp src/desktop_application.cpp)
     if(UNIX AND NOT APPLE)
         # Release ZIPs place their SDL/C++ runtimes next to the application in

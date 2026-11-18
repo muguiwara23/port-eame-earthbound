@@ -12,6 +12,7 @@
 #include "eb/session_storage.hpp"
 #include "eb/snapshot_store.hpp"
 #include "generated_assets.hpp"
+#include "porteame/ios.h"
 
 #include <SDL3/SDL.h>
 // Port/eame: on iOS SDL3 starts the UIKit application (with its scene) and
@@ -430,39 +431,15 @@ int run_application(int argc, char **argv) {
 void eb::show_desktop_error(const std::string &message) {
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "EarthBound", message.c_str(), nullptr);
 }
-#include <cstdio>
-#include <ctime>
-#include <fcntl.h>
-#include <unistd.h>
-// Port/eame: an iOS app has no console. Its output goes to Documents/
-// port-eame-log.txt (the previous run's kept as port-eame-log.old.txt),
-// unbuffered, so the Files app shows what happened even after a crash.
-static void ios_log_to_documents() {
-    const char *documents = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
-    if (!documents)
-        return;
-    std::string folder(documents);
-    if (!folder.ends_with("/"))
-        folder += "/";
-    const std::string log = folder + "port-eame-log.txt", old = folder + "port-eame-log.old.txt";
-    std::rename(log.c_str(), old.c_str());
-    const int fd = open(log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0)
-        return;
-    dup2(fd, STDOUT_FILENO);
-    dup2(fd, STDERR_FILENO);
-    close(fd);
-    std::setvbuf(stdout, nullptr, _IONBF, 0);
-    std::setvbuf(stderr, nullptr, _IONBF, 0);
-    const std::time_t now = std::time(nullptr);
-    std::printf("Port/eame iOS: started %s", std::ctime(&now));
-    std::printf("Port/eame iOS: documents %s\n", folder.c_str());
-}
 #endif
+// Port/eame: the kit's iOS startup (port-eame-kit, porteame/ios.h): an iOS
+// app has no console, so its output goes to Documents/port-eame-log.txt (the
+// previous run's kept as port-eame-log-previous.txt), unbuffered, so the Files
+// app shows what happened even after a crash. And at the end the app really
+// ends: SDL3 leaves an iOS app running, on a black screen, when main returns.
+// Off iOS both do nothing.
 int main(int argc, char **argv) {
-#ifdef SDL_PLATFORM_IOS
-    ios_log_to_documents();
-#endif
-    return eb::run_application(argc, argv);
+    pe_ios_startup("EarthBound", nullptr);
+    return pe_ios_finish(eb::run_application(argc, argv));
 }
 #endif
